@@ -44,9 +44,9 @@ const config = {
   /** OrbitControls damping factor */
   controlsDampingFactor: 0.05,
   /** OrbitControls minimum distance */
-  controlsMinDistance: 1,
+  controlsMinDistance: 0.1, // Allow zooming in closer
   /** OrbitControls maximum distance */
-  controlsMaxDistance: 50,
+  controlsMaxDistance: 200, // Allow zooming out further
   /** Initial controls target position (x, y, z) */
   initialControlsTarget: { x: 0, y: 1, z: 0 },
 
