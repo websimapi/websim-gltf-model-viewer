@@ -18,7 +18,7 @@ const loadingIndicator = document.getElementById('loading-indicator');
 function init() {
     scene = new THREE.Scene();
     scene.background = new THREE.Color(config.backgroundColor);
-    scene.fog = new THREE.Fog(config.fogColor, config.fogNear, config.fogFar);
+    // scene.fog = new THREE.Fog(config.fogColor, config.fogNear, config.fogFar);
 
     camera = new THREE.PerspectiveCamera(config.cameraFov, window.innerWidth / window.innerHeight, config.cameraNear, config.cameraFar);
     camera.position.set(config.initialCameraPosition.x, config.initialCameraPosition.y, config.initialCameraPosition.z);

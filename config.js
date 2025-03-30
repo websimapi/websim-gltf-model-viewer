@@ -3,34 +3,28 @@
  */
 const config = {
   /** Background color of the scene (CSS color value or hex number) */
-  backgroundColor: 0xcccccc,
-  /** Fog color (should generally match background) */
-  fogColor: 0xcccccc,
-  /** Fog density near plane */
-  fogNear: 10,
-  /** Fog density far plane */
-  fogFar: 70,
+  backgroundColor: 0xe0e0e0, // Lighter gray background
 
   /** Hemisphere light sky color */
   hemiLightSkyColor: 0xffffff,
   /** Hemisphere light ground color */
-  hemiLightGroundColor: 0x8d8d8d,
+  hemiLightGroundColor: 0xaaaaaa, // Slightly darker ground for hemi light
   /** Hemisphere light intensity */
-  hemiLightIntensity: 2.0,
+  hemiLightIntensity: 2.5, // Slightly increased intensity
 
   /** Directional light color */
   dirLightColor: 0xffffff,
   /** Directional light intensity */
-  dirLightIntensity: 2.5,
+  dirLightIntensity: 3.0, // Slightly increased intensity
   /** Directional light position (x, y, z) */
-  dirLightPosition: { x: 5, y: 10, z: 7.5 },
+  dirLightPosition: { x: 8, y: 15, z: 10 }, // Adjusted position slightly
   /** Shadow map resolution (width/height) */
   shadowMapSize: 1024,
    /** Shadow camera frustum size */
   shadowCameraSize: 5, // top/bottom/left/right will be +/- this value
 
   /** Ground plane color */
-  groundColor: 0xbbbbbb,
+  groundColor: 0x999999, // Darker gray ground
 
   /** Initial camera position (x, y, z) */
   initialCameraPosition: { x: 0, y: 1.5, z: 4 },
