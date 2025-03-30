@@ -2,9 +2,11 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js'; 
+import config from './config.js'; 
 
 let scene, camera, renderer, clock, mixer, currentModel, currentAction;
-let controls; // OrbitControls
+let controls; 
 let currentAnimations = [];
 const modelInput = document.getElementById('modelInput');
 const animationSelect = document.getElementById('animationSelect');
@@ -14,69 +16,60 @@ const loadingIndicator = document.getElementById('loading-indicator');
 // --- Initialization ---
 
 function init() {
-    // Scene
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xcccccc); 
-    scene.fog = new THREE.Fog(0xcccccc, 10, 70); 
+    scene.background = new THREE.Color(config.backgroundColor);
+    scene.fog = new THREE.Fog(config.fogColor, config.fogNear, config.fogFar);
 
-    // Camera
-    camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(0, 1.5, 4); 
+    camera = new THREE.PerspectiveCamera(config.cameraFov, window.innerWidth / window.innerHeight, config.cameraNear, config.cameraFar);
+    camera.position.set(config.initialCameraPosition.x, config.initialCameraPosition.y, config.initialCameraPosition.z);
 
-    // Renderer
     renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap; 
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.body.appendChild(renderer.domElement);
 
-    // Clock
     clock = new THREE.Clock();
 
-    // Controls
     controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
+    controls.dampingFactor = config.controlsDampingFactor;
     controls.screenSpacePanning = false;
-    controls.minDistance = 1;
-    controls.maxDistance = 50;
-    controls.target.set(0, 1, 0); 
+    controls.minDistance = config.controlsMinDistance;
+    controls.maxDistance = config.controlsMaxDistance;
+    controls.target.set(config.initialControlsTarget.x, config.initialControlsTarget.y, config.initialControlsTarget.z);
     controls.update();
 
-    // Lighting
-    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x8d8d8d, 2); 
+    const hemiLight = new THREE.HemisphereLight(config.hemiLightSkyColor, config.hemiLightGroundColor, config.hemiLightIntensity);
     hemiLight.position.set(0, 20, 0);
     scene.add(hemiLight);
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 2.5); 
-    dirLight.position.set(5, 10, 7.5); 
+    const dirLight = new THREE.DirectionalLight(config.dirLightColor, config.dirLightIntensity);
+    dirLight.position.set(config.dirLightPosition.x, config.dirLightPosition.y, config.dirLightPosition.z);
     dirLight.castShadow = true;
-    dirLight.shadow.mapSize.width = 1024; 
-    dirLight.shadow.mapSize.height = 1024;
-    dirLight.shadow.camera.top = 5; 
-    dirLight.shadow.camera.bottom = -5;
-    dirLight.shadow.camera.left = -5;
-    dirLight.shadow.camera.right = 5;
+    dirLight.shadow.mapSize.width = config.shadowMapSize;
+    dirLight.shadow.mapSize.height = config.shadowMapSize;
+    dirLight.shadow.camera.top = config.shadowCameraSize;
+    dirLight.shadow.camera.bottom = -config.shadowCameraSize;
+    dirLight.shadow.camera.left = -config.shadowCameraSize;
+    dirLight.shadow.camera.right = config.shadowCameraSize;
     dirLight.shadow.camera.near = 0.1;
-    dirLight.shadow.camera.far = 50;
+    dirLight.shadow.camera.far = 50; 
     scene.add(dirLight);
 
-    // Ground
     const ground = new THREE.Mesh(
         new THREE.PlaneGeometry(100, 100),
-        new THREE.MeshPhongMaterial({ color: 0xbbbbbb, depthWrite: false }) 
+        new THREE.MeshPhongMaterial({ color: config.groundColor, depthWrite: false })
     );
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
     scene.add(ground);
 
-    // Event Listeners
     window.addEventListener('resize', onWindowResize);
     modelInput.addEventListener('change', handleFileSelect);
     animationSelect.addEventListener('change', playSelectedAnimation);
 
-    // Animation Loop
     animate();
 }
 
@@ -87,16 +80,16 @@ function handleFileSelect(event) {
     if (!file) return;
 
     const fileName = file.name.toLowerCase();
-    if (!fileName.endsWith('.gltf') && !fileName.endsWith('.glb')) {
-        showError('Unsupported file type. Please load a .gltf or .glb file.');
-        modelInput.value = ''; 
+    if (!fileName.endsWith('.gltf') && !fileName.endsWith('.glb') && !fileName.endsWith('.fbx')) {
+        showError('Unsupported file type. Please load a .gltf, .glb, or .fbx file.');
+        modelInput.value = '';
         return;
     }
 
     const reader = new FileReader();
     reader.onload = (e) => {
         const contents = e.target.result;
-        loadModel(contents, file.name);
+        loadModel(contents, fileName); 
     };
     reader.onerror = (e) => {
          console.error("FileReader error:", e);
@@ -106,9 +99,9 @@ function handleFileSelect(event) {
 
     showLoading();
     clearScene();
-    showError(''); 
+    showError('');
 
-    if (fileName.endsWith('.glb')) {
+    if (fileName.endsWith('.glb') || fileName.endsWith('.fbx')) {
         reader.readAsArrayBuffer(file);
     } else { 
         reader.readAsText(file);
@@ -116,18 +109,13 @@ function handleFileSelect(event) {
 }
 
 function loadModel(data, fileName) {
-    const loader = new GLTFLoader();
-
-    const dracoLoader = new DRACOLoader();
-    dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/libs/draco/gltf/');
-    loader.setDRACOLoader(dracoLoader);
-
     const loadStartTime = performance.now();
+    let loader;
 
-    loader.parse(data, '', (gltf) => {
+    const setupModel = (model, animations = []) => {
         console.log(`Model "${fileName}" loaded in ${(performance.now() - loadStartTime).toFixed(2)} ms`);
-        currentModel = gltf.scene;
-        currentAnimations = gltf.animations;
+        currentModel = model;
+        currentAnimations = animations;
 
         scene.add(currentModel);
 
@@ -135,40 +123,61 @@ function loadModel(data, fileName) {
             if (child.isMesh) {
                 child.castShadow = true;
                 child.receiveShadow = true;
-                if (child.isSkinnedMesh) {
-                     child.frustumCulled = false;
-                }
             }
         });
 
-        mixer = new THREE.AnimationMixer(currentModel);
-        populateAnimationSelect();
-
-        if (currentAnimations.length > 0) {
-            playAnimation(currentAnimations[0]); 
+        if (currentAnimations && currentAnimations.length > 0) {
+            mixer = new THREE.AnimationMixer(currentModel);
+            populateAnimationSelect();
+            playAnimation(currentAnimations[0]);
         } else {
-             animationSelect.innerHTML = '<option>No animations found</option>';
-             animationSelect.disabled = true;
+            console.log("No animations found in the model.");
+            animationSelect.innerHTML = '<option>No animations found</option>';
+            animationSelect.disabled = true;
+            mixer = null; 
         }
 
         centerAndFocusCamera();
-
         hideLoading();
         modelInput.value = ''; 
+    };
 
-
-    }, (error) => {
-        console.error(`An error happened during GLTF loading of "${fileName}":`, error);
-        let errorMsg = `Error loading model: ${error.message || 'Unknown error'}.`;
-        if (error.message && error.message.includes('Unexpected token') && typeof data === 'string') {
-             errorMsg += ' This might be a text GLTF file. Ensure it\'s valid JSON.';
+    const handleLoadError = (error) => {
+         console.error(`An error happened during loading of "${fileName}":`, error);
+         let errorMsg = `Error loading model: ${error.message || 'Unknown error'}.`;
+         if (error.message && error.message.includes('Unexpected token') && typeof data === 'string') {
+             errorMsg += ' This might be an invalid text GLTF file (check JSON).';
         } else if (error.message && error.message.includes('Magic')) {
-             errorMsg += ' This might indicate a corrupt GLB file.';
+             errorMsg += ' This might indicate a corrupt binary file (GLB/FBX).';
         }
         showError(errorMsg + ' Check console for details.');
         hideLoading();
-        modelInput.value = ''; 
-    });
+        modelInput.value = '';
+    };
+
+    if (fileName.endsWith('.gltf') || fileName.endsWith('.glb')) {
+        loader = new GLTFLoader();
+        const dracoLoader = new DRACOLoader();
+        dracoLoader.setDecoderPath(config.dracoDecoderPath);
+        loader.setDRACOLoader(dracoLoader);
+
+        try {
+            loader.parse(data, '', (gltf) => {
+                setupModel(gltf.scene, gltf.animations);
+            }, handleLoadError);
+        } catch (error) {
+            handleLoadError(error);
+        }
+
+    } else if (fileName.endsWith('.fbx')) {
+        loader = new FBXLoader();
+        try {
+            const fbxModel = loader.parse(data, ''); 
+            setupModel(fbxModel, fbxModel.animations); 
+        } catch(error) {
+             handleLoadError(error);
+        }
+    }
 }
 
 function centerAndFocusCamera() {
@@ -179,19 +188,26 @@ function centerAndFocusCamera() {
     const size = box.getSize(new THREE.Vector3());
 
     const maxDim = Math.max(size.x, size.y, size.z);
-    if (maxDim <= 0) {
-         console.warn("Model has zero or negative dimensions. Using default camera positioning.");
-         camera.position.set(0, 1.5, 4);
-         controls.target.set(0, 1, 0);
-         controls.update();
-         return;
+    if (!isFinite(maxDim) || maxDim <= 0) {
+        console.warn("Model has invalid bounds or zero dimensions. Using default camera positioning.");
+        camera.position.set(config.initialCameraPosition.x, config.initialCameraPosition.y, config.initialCameraPosition.z);
+        controls.target.set(config.initialControlsTarget.x, config.initialControlsTarget.y, config.initialControlsTarget.z);
+        controls.update();
+        return;
     }
 
     const fov = camera.fov * (Math.PI / 180);
     let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
-    cameraZ *= 1.5; 
+    cameraZ = Math.max(cameraZ, size.y / 2); 
+    cameraZ *= config.cameraFocusZoomFactor; 
 
-    camera.position.set(center.x, center.y + size.y * 0.2, center.z + Math.max(cameraZ, 1));
+    cameraZ = Math.max(cameraZ, config.cameraFocusMinDistance);
+
+    camera.position.set(
+        center.x,
+        center.y + size.y * config.cameraFocusVerticalOffsetFactor, 
+        center.z + cameraZ 
+    );
 
     controls.target.copy(center);
     controls.update(); 
@@ -200,10 +216,10 @@ function centerAndFocusCamera() {
 // --- Animation Control ---
 
 function populateAnimationSelect() {
-    animationSelect.innerHTML = ''; 
-    animationSelect.disabled = currentAnimations.length === 0;
+    animationSelect.innerHTML = '';
+    animationSelect.disabled = !currentAnimations || currentAnimations.length === 0;
 
-    if (currentAnimations.length > 0) {
+    if (currentAnimations && currentAnimations.length > 0) {
         currentAnimations.forEach((clip, index) => {
             const option = document.createElement('option');
             option.value = index;
@@ -219,6 +235,8 @@ function populateAnimationSelect() {
 }
 
 function playSelectedAnimation() {
+    if (!mixer) return; 
+
     const selectedIndex = parseInt(animationSelect.value, 10);
     if (!isNaN(selectedIndex) && selectedIndex >= 0 && selectedIndex < currentAnimations.length) {
         playAnimation(currentAnimations[selectedIndex]);
@@ -233,17 +251,16 @@ function playAnimation(clip) {
         return;
     }
 
-    const newAction = mixer.clipAction(clip);
-
-    if (currentAction && currentAction !== newAction) {
-        currentAction.fadeOut(0.3); 
+    if (currentAction) {
+        currentAction.fadeOut(config.animationFadeDuration);
     }
 
+    const newAction = mixer.clipAction(clip);
     newAction
         .reset() 
         .setEffectiveTimeScale(1) 
         .setEffectiveWeight(1) 
-        .fadeIn(0.3) 
+        .fadeIn(config.animationFadeDuration) 
         .play(); 
 
     currentAction = newAction;
@@ -252,40 +269,43 @@ function playAnimation(clip) {
 // --- Scene Management & Cleanup ---
 
 function clearScene() {
-    if (currentModel) {
-        if (mixer) {
-             mixer.stopAllAction();
-             mixer = null; 
-        }
+    if (currentAction) {
+        currentAction.stop(); 
+        currentAction = null;
+    }
+    if (mixer) {
+         mixer.stopAllAction();
+         mixer.uncacheRoot(currentModel); 
+         mixer = null;
+     }
 
+    if (currentModel) {
         scene.remove(currentModel);
 
         currentModel.traverse((child) => {
             if (child.isMesh) {
-                if(child.geometry) child.geometry.dispose();
-
+                if(child.geometry) {
+                    child.geometry.dispose();
+                }
                 if (child.material) {
-                    if (Array.isArray(child.material)) {
-                        child.material.forEach(cleanMaterial);
-                    } else {
-                        cleanMaterial(child.material);
-                    }
+                    cleanMaterial(child.material);
                 }
             }
         });
         console.log("Previous model resources disposed.");
-        currentModel = null; 
+        currentModel = null;
     }
 
-    currentAnimations = [];
-    currentAction = null; 
+    currentAnimations = []; 
     animationSelect.innerHTML = '<option>Load a model first</option>';
     animationSelect.disabled = true;
+
+    console.log("Scene cleared. Renderer info:", renderer.info.memory);
 }
 
 function cleanMaterial(material) {
     if (!material) return;
-    material.dispose(); 
+    material.dispose();
 
     for (const key of Object.keys(material)) {
         const value = material[key];
@@ -322,7 +342,9 @@ function onWindowResize() {
 }
 
 function animate() {
-    renderer.setAnimationLoop(renderLoop); 
+    requestAnimationFrame(animate);
+    renderLoop();
+
 }
 
 function renderLoop() {
@@ -337,8 +359,9 @@ function renderLoop() {
     renderer.render(scene, camera);
 }
 
+// --- Initialization Call ---
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
 } else {
-    init();
+    init(); 
 }
