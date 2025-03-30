@@ -4,20 +4,27 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import config from './config.js';
+// Import UI functions
+import {
+    displayGeneralInfo,
+    displaySkeletonInfo,
+    displaySkinningInfo,
+    clearModelInfoUI,
+    populateAnimationSelect,
+    displayAnimationDetails,
+    clearAnimationUI,
+    showError,
+    showLoading,
+    hideLoading
+} from './ui.js';
+
 
 let scene, camera, renderer, clock, mixer, currentModel, currentAction;
 let controls;
 let currentAnimations = [];
 const modelInput = document.getElementById('modelInput');
 const animationSelect = document.getElementById('animationSelect');
-const errorMessageDiv = document.getElementById('error-message');
-const loadingIndicator = document.getElementById('loading-indicator');
-const animationControlsDiv = document.getElementById('animation-controls');
-const animationDetailsDiv = document.getElementById('animation-details');
-const modelInfoDiv = document.getElementById('model-info');
-const generalInfoDiv = document.getElementById('general-model-info');
-const skeletonInfoDiv = document.getElementById('skeleton-info');
-const skinningInfoDiv = document.getElementById('skinning-info');
+// Removed UI element variables, handled in ui.js
 let originalGltfData = null;
 
 // --- Initialization ---
@@ -25,7 +32,6 @@ let originalGltfData = null;
 function init() {
     scene = new THREE.Scene();
     scene.background = new THREE.Color(config.backgroundColor);
-    // scene.fog = new THREE.Fog(config.fogColor, config.fogNear, config.fogFar);
 
     camera = new THREE.PerspectiveCamera(config.cameraFov, window.innerWidth / window.innerHeight, config.cameraNear, config.cameraFar);
     camera.position.set(config.initialCameraPosition.x, config.initialCameraPosition.y, config.initialCameraPosition.z);
@@ -62,7 +68,7 @@ function init() {
     dirLight.shadow.camera.left = -config.shadowCameraSize;
     dirLight.shadow.camera.right = config.shadowCameraSize;
     dirLight.shadow.camera.near = 0.1;
-    dirLight.shadow.camera.far = 50; 
+    dirLight.shadow.camera.far = 50;
     scene.add(dirLight);
 
     const ground = new THREE.Mesh(
@@ -77,7 +83,7 @@ function init() {
     modelInput.addEventListener('change', handleFileSelect);
     animationSelect.addEventListener('change', playSelectedAnimation);
 
-    clearModelInfoUI(); 
+    clearModelInfoUI(); // Use imported function
     animate();
 }
 
@@ -89,7 +95,7 @@ function handleFileSelect(event) {
 
     const fileName = file.name.toLowerCase();
     if (!fileName.endsWith('.gltf') && !fileName.endsWith('.glb') && !fileName.endsWith('.fbx')) {
-        showError('Unsupported file type. Please load a .gltf, .glb, or .fbx file.');
+        showError('Unsupported file type. Please load a .gltf, .glb, or .fbx file.'); // Use imported function
         modelInput.value = '';
         return;
     }
@@ -97,22 +103,22 @@ function handleFileSelect(event) {
     const reader = new FileReader();
     reader.onload = (e) => {
         const contents = e.target.result;
-        loadModel(contents, fileName); 
+        loadModel(contents, fileName);
     };
     reader.onerror = (e) => {
          console.error("FileReader error:", e);
-         showError('Error reading file.');
-         hideLoading();
+         showError('Error reading file.'); // Use imported function
+         hideLoading(); // Use imported function
     }
 
-    showLoading();
+    showLoading(); // Use imported function
     clearScene();
-    showError('');
-    originalGltfData = null; 
+    showError(''); // Use imported function
+    originalGltfData = null;
 
     if (fileName.endsWith('.glb') || fileName.endsWith('.fbx')) {
         reader.readAsArrayBuffer(file);
-    } else { 
+    } else {
         reader.readAsText(file);
     }
 }
@@ -120,13 +126,13 @@ function handleFileSelect(event) {
 function loadModel(data, fileName) {
     const loadStartTime = performance.now();
     let loader;
-    let isGltf = false; 
+    let isGltf = false;
 
     const setupModel = (model, animations = [], extraData = null) => {
         console.log(`Model "${fileName}" loaded in ${(performance.now() - loadStartTime).toFixed(2)} ms`);
         currentModel = model;
         currentAnimations = animations;
-        originalGltfData = isGltf ? extraData : null; 
+        originalGltfData = isGltf ? extraData : null;
 
         scene.add(currentModel);
 
@@ -159,11 +165,8 @@ function loadModel(data, fileName) {
                 skinnedMeshes.push(child);
                 if (child.skeleton) {
                      child.skeleton.bones.forEach(bone => {
-                         if (bone.parent && !bone.parent.isBone) {
-                            if (!rootBones.some(root => root.uuid === bone.uuid)) {
-                                rootBones.push(bone);
-                            }
-                         } else if (!bone.parent) { 
+                        // Find bones that are direct children of the scene/group or whose parent isn't a bone
+                         if (!bone.parent || !bone.parent.isBone || bone.parent === currentModel) {
                             if (!rootBones.some(root => root.uuid === bone.uuid)) {
                                 rootBones.push(bone);
                             }
@@ -173,24 +176,25 @@ function loadModel(data, fileName) {
             }
         });
 
+        // Call UI functions
         displayGeneralInfo(fileName, meshes, materials, totalVertices, totalFaces, originalGltfData);
-        displaySkeletonInfo(rootBones); 
+        displaySkeletonInfo(rootBones);
         displaySkinningInfo(skinnedMeshes);
-        modelInfoDiv.style.display = 'block'; 
+
 
         if (currentAnimations && currentAnimations.length > 0) {
             mixer = new THREE.AnimationMixer(currentModel);
-            populateAnimationSelect();
-            playAnimation(currentAnimations[0]); 
-            animationControlsDiv.style.display = 'block'; 
+            populateAnimationSelect(currentAnimations); // Use imported function
+            playAnimation(currentAnimations[0]);
+            displayAnimationDetails(currentAnimations[0]); // Display details for the first anim
         } else {
             console.log("No animations found in the model.");
-            clearAnimationUI();
-             mixer = null; 
+            clearAnimationUI(); // Use imported function
+             mixer = null;
         }
 
         centerAndFocusCamera();
-        hideLoading();
+        hideLoading(); // Use imported function
         modelInput.value = '';
     };
 
@@ -202,16 +206,16 @@ function loadModel(data, fileName) {
         } else if (error.message && error.message.includes('Magic')) {
              errorMsg += ' This might indicate a corrupt binary file (GLB/FBX).';
         }
-        showError(errorMsg + ' Check console for details.');
-        hideLoading();
+        showError(errorMsg + ' Check console for details.'); // Use imported function
+        hideLoading(); // Use imported function
         modelInput.value = '';
     };
 
-    clearScene(); 
+    clearScene();
 
     if (fileName.endsWith('.gltf') || fileName.endsWith('.glb')) {
         loader = new GLTFLoader();
-        isGltf = true; 
+        isGltf = true;
         const dracoLoader = new DRACOLoader();
         dracoLoader.setDecoderPath(config.dracoDecoderPath);
         loader.setDRACOLoader(dracoLoader);
@@ -228,7 +232,7 @@ function loadModel(data, fileName) {
         loader = new FBXLoader();
         isGltf = false;
         try {
-            const fbxModel = loader.parse(data, ''); 
+            const fbxModel = loader.parse(data, '');
             const modelToAdd = fbxModel.isGroup ? fbxModel : new THREE.Group().add(fbxModel);
             setupModel(modelToAdd, fbxModel.animations); 
         } catch(error) {
@@ -272,23 +276,7 @@ function centerAndFocusCamera() {
 
 // --- Animation Control ---
 
-function populateAnimationSelect() {
-    animationSelect.innerHTML = '';
-    animationSelect.disabled = !currentAnimations || currentAnimations.length === 0;
-
-    if (currentAnimations && currentAnimations.length > 0) {
-        currentAnimations.forEach((clip, index) => {
-            const option = document.createElement('option');
-            option.value = index;
-            option.textContent = clip.name ? clip.name.trim() : `Animation ${index + 1}`;
-            animationSelect.appendChild(option);
-        });
-        animationSelect.selectedIndex = 0; 
-        displayAnimationDetails(currentAnimations[0]); 
-    } else {
-        clearAnimationUI();
-    }
-}
+// Removed populateAnimationSelect - moved to ui.js
 
 function playSelectedAnimation() {
     if (!mixer) return;
@@ -297,10 +285,10 @@ function playSelectedAnimation() {
     if (!isNaN(selectedIndex) && selectedIndex >= 0 && selectedIndex < currentAnimations.length) {
         const clip = currentAnimations[selectedIndex];
         playAnimation(clip);
-        displayAnimationDetails(clip); 
+        displayAnimationDetails(clip); // Use imported function
     } else if (currentAnimations.length > 0) {
         console.warn("Invalid animation selection index:", animationSelect.value);
-        clearAnimationUI(true); 
+        clearAnimationUI(true); // Use imported function (keep select visible)
     }
 }
 
@@ -325,149 +313,7 @@ function playAnimation(clip) {
     currentAction = newAction;
 }
 
-function displayAnimationDetails(clip) {
-    if (!clip) {
-         animationDetailsDiv.innerHTML = '<p>No animation selected or details available.</p>';
-         return;
-    }
-    const duration = clip.duration.toFixed(2);
-    const tracks = clip.tracks.length;
-    animationDetailsDiv.innerHTML = `
-        <ul>
-            <li><strong>Name:</strong> ${clip.name || 'N/A'}</li>
-            <li><strong>Duration:</strong> ${duration} seconds</li>
-            <li><strong>Tracks:</strong> ${tracks}</li>
-        </ul>
-    `;
-}
-
-// --- UI Display for Model Info ---
-
-function displayGeneralInfo(fileName, meshes, materials, vertices, faces, gltfData) {
-    generalInfoDiv.innerHTML = '<h4>General Info</h4>'; 
-
-    const list = document.createElement('ul');
-
-    let listItem = document.createElement('li');
-    listItem.innerHTML = `<strong>File Name:</strong> ${fileName}`;
-    list.appendChild(listItem);
-
-    listItem = document.createElement('li');
-    listItem.innerHTML = `<strong>Meshes:</strong> ${meshes.length}`;
-    list.appendChild(listItem);
-
-    listItem = document.createElement('li');
-    listItem.innerHTML = `<strong>Materials:</strong> ${materials.size}`; 
-    list.appendChild(listItem);
-
-    listItem = document.createElement('li');
-    listItem.innerHTML = `<strong>Vertices:</strong> ${vertices.toLocaleString()}`;
-    list.appendChild(listItem);
-
-    listItem = document.createElement('li');
-    listItem.innerHTML = `<strong>Faces (Triangles):</strong> ${Math.round(faces).toLocaleString()}`;
-    list.appendChild(listItem);
-
-    if (gltfData && gltfData.parser && gltfData.parser.json) {
-        const json = gltfData.parser.json;
-        if (json.asset && json.asset.generator) {
-            listItem = document.createElement('li');
-            listItem.innerHTML = `<strong>Generator:</strong> ${json.asset.generator}`;
-            list.appendChild(listItem);
-        }
-        const hasDraco = gltfData.parser.extensionsUsed && gltfData.parser.extensionsUsed.includes('KHR_draco_mesh_compression');
-        listItem = document.createElement('li');
-        listItem.innerHTML = `<strong>Draco Compressed:</strong> ${hasDraco ? 'Yes' : 'No'}`;
-        list.appendChild(listItem);
-    }
-
-    generalInfoDiv.appendChild(list);
-}
-
-function displaySkeletonInfo(rootBones) {
-    skeletonInfoDiv.innerHTML = '<h4>Skeleton / Armature Hierarchy</h4>'; 
-
-    if (!rootBones || rootBones.length === 0) {
-        skeletonInfoDiv.innerHTML += '<p>No skeleton data or root bones found.</p>';
-        return;
-    }
-
-    const rootList = document.createElement('ul');
-    rootList.style.paddingLeft = '0'; 
-
-    let totalBones = 0;
-
-    function buildBoneList(bone, parentElement, level) {
-        totalBones++;
-        const listItem = document.createElement('li');
-        listItem.style.marginLeft = `${level * 15}px`; 
-        listItem.innerHTML = `<span title="ID: ${bone.id}"> ${bone.name || 'Unnamed Bone'}</span>`; 
-        parentElement.appendChild(listItem);
-
-        if (bone.children.length > 0) {
-            const childrenList = document.createElement('ul');
-             childrenList.style.paddingLeft = '0'; 
-             listItem.appendChild(childrenList); 
-            bone.children.forEach(childBone => {
-                if (childBone.isBone) {
-                    buildBoneList(childBone, childrenList, level + 1);
-                }
-            });
-        }
-    }
-
-    rootBones.forEach(bone => {
-        buildBoneList(bone, rootList, 0);
-    });
-
-    skeletonInfoDiv.appendChild(rootList);
-    skeletonInfoDiv.innerHTML += `<p style="margin-top: 10px;"><strong>Total Bones:</strong> ${totalBones}</p>`;
-}
-
-function displaySkinningInfo(skinnedMeshes) {
-    skinningInfoDiv.innerHTML = '<h4>Skinned Meshes</h4>'; 
-
-    if (!skinnedMeshes || skinnedMeshes.length === 0) {
-        skinningInfoDiv.innerHTML += '<p>No skinned meshes found in model.</p>';
-        return;
-    }
-
-    const list = document.createElement('ul');
-    skinnedMeshes.forEach((mesh, index) => {
-        const listItem = document.createElement('li');
-        const boneCount = mesh.skeleton ? mesh.skeleton.bones.length : 'N/A';
-        const materialName = Array.isArray(mesh.material)
-            ? mesh.material.map(m => m.name || 'Unnamed Material').join(', ')
-            : (mesh.material?.name || 'Unnamed Material');
-
-        listItem.innerHTML = `
-            <strong>${mesh.name || `Skinned Mesh ${index + 1}`}</strong>
-            <ul style="padding-left: 15px; font-size: 0.9em;">
-                <li>Bones: ${boneCount}</li>
-                <li>Material(s): ${materialName}</li>
-                 <li>Vertices: ${mesh.geometry.attributes.position ? mesh.geometry.attributes.position.count.toLocaleString() : 'N/A'}</li>
-            </ul>
-        `;
-        list.appendChild(listItem);
-    });
-     skinningInfoDiv.appendChild(list);
-}
-
-function clearModelInfoUI() {
-    modelInfoDiv.style.display = 'none'; 
-    generalInfoDiv.innerHTML = '<h4>General Info</h4><p>Load a model to see details.</p>'; 
-    skeletonInfoDiv.innerHTML = '<h4>Skeleton / Armature Hierarchy</h4><p>Load a model to see skeleton data.</p>';
-    skinningInfoDiv.innerHTML = '<h4>Skinned Meshes</h4><p>Load a model to see skinning data.</p>';
-}
-
-function clearAnimationUI(keepSelect = false) {
-     if (!keepSelect) {
-         animationControlsDiv.style.display = 'none'; 
-         animationSelect.innerHTML = '<option>Load a model first</option>';
-         animationSelect.disabled = true;
-     }
-     animationDetailsDiv.innerHTML = '<p>No animations found or model not loaded.</p>';
-}
+// Removed displayAnimationDetails - moved to ui.js
 
 // --- Scene Management & Cleanup ---
 
@@ -493,7 +339,7 @@ function clearScene() {
             if (object.isMesh) {
                 if (object.geometry) {
                     object.geometry.dispose();
-                     console.log(`Disposed geometry for mesh: ${object.name || object.uuid}`);
+                     // console.log(`Disposed geometry for mesh: ${object.name || object.uuid}`); // Less verbose logging
                 }
 
                 if (object.material) {
@@ -506,7 +352,7 @@ function clearScene() {
             } else if (object.isLight) {
                  if(object.shadow && object.shadow.map) {
                      object.shadow.map.dispose();
-                     console.log(`Disposed shadow map for light: ${object.name || object.uuid}`);
+                     // console.log(`Disposed shadow map for light: ${object.name || object.uuid}`); // Less verbose logging
                  }
             }
         });
@@ -515,10 +361,15 @@ function clearScene() {
         currentModel = null;
     }
 
-    originalGltfData = null; 
+    originalGltfData = null;
     currentAnimations = [];
-    clearAnimationUI(); 
-    clearModelInfoUI(); 
+    clearAnimationUI(); // Use imported function
+    clearModelInfoUI(); // Use imported function
+
+    // Force garbage collection hint (browser-dependent)
+    if (typeof window.gc === 'function') {
+        window.gc();
+    }
 
     console.log("Scene cleared. Renderer info:", renderer.info.memory);
 }
@@ -537,21 +388,10 @@ function cleanMaterial(material) {
 
 // --- UI Feedback ---
 
-function showError(message) {
-    errorMessageDiv.textContent = message;
-    errorMessageDiv.style.display = message ? 'block' : 'none';
-     if(message) {
-         console.error("UI Error:", message); 
-     }
-}
+// Removed showError - moved to ui.js
+// Removed showLoading - moved to ui.js
+// Removed hideLoading - moved to ui.js
 
-function showLoading() {
-    loadingIndicator.style.display = 'flex'; 
-}
-
-function hideLoading() {
-    loadingIndicator.style.display = 'none';
-}
 
 // --- Core Loop & Resize ---
 
@@ -582,5 +422,5 @@ function renderLoop() {
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
 } else {
-    init(); 
+    init();
 }

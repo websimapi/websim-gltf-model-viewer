@@ -49,6 +49,13 @@
             border-bottom: 1px solid #eee;
             padding-bottom: 5px;
         }
+        #controls h4 { 
+            margin-top: 0;
+            margin-bottom: 8px;
+            font-size: 0.9em;
+            font-weight: 600;
+            color: #555;
+        }
         #controls label {
             display: block;
             margin-bottom: 5px;
@@ -68,16 +75,16 @@
             font-size: 0.9em;
             transition: border-color 0.2s ease;
         }
-         #controls select:disabled {
-             background-color: #eee;
-             cursor: not-allowed;
-         }
-         #controls select:focus,
-         #controls input[type="file"]:focus {
-             outline: none;
-             border-color: #007bff; /* Highlight focus */
-             box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
-         }
+        #controls select:disabled {
+            background-color: #eee;
+            cursor: not-allowed;
+        }
+        #controls select:focus,
+        #controls input[type="file"]:focus {
+            outline: none;
+            border-color: #007bff; /* Highlight focus */
+            box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+        }
         /* Style file input button */
         #controls input[type="file"]::file-selector-button {
             padding: 8px 12px;
@@ -97,7 +104,7 @@
         .model-info-section {
             margin-bottom: 15px;
             font-size: 0.85em;
-            max-height: 200px; /* Limit height for scrollable lists */
+            max-height: 250px; /* Increase height slightly */
             overflow-y: auto; /* Make lists scrollable */
             background: rgba(0, 0, 0, 0.02); /* Subtle background */
             border: 1px solid #eee;
@@ -110,19 +117,74 @@
             margin: 0;
         }
         .model-info-section li {
-            padding: 3px 0;
+            padding: 4px 0; /* Slightly more padding */
             border-bottom: 1px dashed #eee; /* Separator */
         }
-         .model-info-section li:last-child {
-             border-bottom: none;
-         }
-        .model-info-section pre { /* For potentially detailed output */
-             white-space: pre-wrap;
-             word-wrap: break-word;
-             font-size: 0.9em;
-             max-height: 150px; /* Limit pre height */
-             overflow: auto;
-         }
+        .model-info-section li:last-child {
+            border-bottom: none;
+        }
+        .model-info-section strong {
+            color: #333; /* Make bold text slightly darker */
+        }
+        .model-info-section p { 
+            margin-top: 5px;
+            margin-bottom: 5px;
+            color: #666;
+        }
+        /* Skeleton Hierarchy Specific Styles */
+        .skeleton-hierarchy {
+            padding-left: 0;
+            font-size: 0.9em;
+        }
+        .skeleton-hierarchy details {
+            margin-left: 10px; /* Indent nested bones */
+            border-left: 1px solid #ddd; /* Visual indicator of hierarchy */
+            padding-left: 8px;
+            margin-bottom: 2px; /* Small gap between nodes */
+        }
+        .skeleton-hierarchy summary {
+            cursor: pointer;
+            padding: 2px 0;
+            list-style: none; /* Remove default marker */
+            outline: none; /* Remove focus outline */
+        }
+        .skeleton-hierarchy summary::-webkit-details-marker {
+            display: none; /* Hide default arrow in Chrome/Safari */
+        }
+        .skeleton-hierarchy summary::before {
+            /* Custom open/close indicator */
+            content: '▶'; /* Closed state */
+            display: inline-block;
+            width: 1em;
+            margin-right: 5px;
+            font-size: 0.7em;
+            color: #888;
+            transition: transform 0.1s ease-in-out;
+        }
+        .skeleton-hierarchy details[open] > summary::before {
+            content: '▼'; /* Open state */
+            /* transform: rotate(90deg); */ /* Alternative rotation */
+        }
+
+        .bone-icon {
+            display: inline-block;
+            margin-right: 4px;
+            font-size: 0.9em; /* Slightly smaller icon */
+        }
+        .bone-name {
+            color: #2a2a72; /* Dark blue for bone names */
+            font-weight: 500;
+        }
+        .bone-children {
+            padding-left: 5px; /* Further indent children */
+        }
+        .total-bones {
+            margin-top: 10px !important; /* Add space above total */
+            font-size: 0.95em;
+            font-weight: 600;
+            border-top: 1px solid #eee;
+            padding-top: 5px;
+        }
 
         /* Error Message Styling */
         #error-message {
@@ -184,7 +246,8 @@
       "imports": {
         "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js",
         "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/",
-        "./config.js": "./config.js"
+        "./config.js": "./config.js",
+        "./ui.js": "./ui.js"
       }
     }
     </script>
@@ -202,29 +265,30 @@
                 <option>Load a model first</option>
             </select>
             <div id="animation-details" class="model-info-section">
+                <!-- Content managed by ui.js -->
                 <p>No animation selected.</p>
             </div>
         </div>
 
         <div id="model-info" style="display: none;">
-            <!-- Renamed "Model Information" to "Details" -->
             <h3>Model Details</h3>
 
-            <!-- Added General Info Section -->
             <div id="general-model-info" class="model-info-section">
-                 <h4>General Info</h4>
-                 <p>Load a model to see details.</p>
+                <!-- Content managed by ui.js -->
+                <h4>General Info</h4>
+                <p>Load a model to see details.</p>
             </div>
 
             <div id="skeleton-info" class="model-info-section">
-                 <!-- Changed title -->
-                 <h4>Skeleton / Armature Hierarchy</h4>
-                 <p>Load a model to see skeleton data.</p>
+                <!-- Content managed by ui.js -->
+                <h4>Skeleton / Armature Hierarchy</h4>
+                <p>Load a model to see skeleton data.</p>
             </div>
-             <div id="skinning-info" class="model-info-section">
-                 <h4>Skinned Meshes</h4>
-                 <p>Load a model to see skinning data.</p>
-             </div>
+            <div id="skinning-info" class="model-info-section">
+                <!-- Content managed by ui.js -->
+                <h4>Skinned Meshes</h4>
+                <p>Load a model to see skinning data.</p>
+            </div>
         </div>
     </div>
 
