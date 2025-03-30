@@ -26,53 +26,58 @@ const Landmark = {
     LEFT_FOOT_INDEX: 31, RIGHT_FOOT_INDEX: 32
 };
 
-// Helper Vectors
-const V_UP = new THREE.Vector3(0, 1, 0);
-const V_FORWARD = new THREE.Vector3(0, 0, 1); 
+// Helper Vectors & Quaternions (avoid re-creation)
+const V_UP = Object.freeze(new THREE.Vector3(0, 1, 0)); // Make immutable
+const V_FORWARD = Object.freeze(new THREE.Vector3(0, 0, 1)); // Make immutable
 const tempVec1 = new THREE.Vector3();
 const tempVec2 = new THREE.Vector3();
 const tempVec3 = new THREE.Vector3();
+const tempVec4 = new THREE.Vector3(); // Added for cross product
 const tempQuat = new THREE.Quaternion();
 const tempMatrix = new THREE.Matrix4();
+const tempMatrixBone = new THREE.Matrix4();
 
 // --- Bone Name Mapping (Crucial & Model-Dependent) ---
-// This is a HIGHLY GENERIC example. You WILL need to adjust these names
-// based on the actual bone names in your loaded models (FBX/GLTF).
+// This is a HIGHLY GENERIC example using Mixamo naming conventions.
+// You WILL likely need to adjust these names based on the actual
+// bone names in your loaded models (FBX/GLTF).
 // Use console logging or the Skeleton UI to find the correct names.
 const boneNameMap = {
     Hips: "mixamorigHips",
-    Spine: "mixamorigSpine", 
-    Chest: "mixamorigSpine1", 
-    UpperChest: "mixamorigSpine2", 
+    Spine: "mixamorigSpine",
+    Chest: "mixamorigSpine1", // Often Chest or Spine1
+    UpperChest: "mixamorigSpine2", // Often UpperChest or Spine2
     Neck: "mixamorigNeck",
     Head: "mixamorigHead",
 
-    LeftShoulder: "mixamorigLeftShoulder", 
-    LeftUpperArm: "mixamorigLeftArm", 
-    LeftLowerArm: "mixamorigLeftForeArm", 
-    LeftHand: "mixamorigLeftHand", 
+    LeftShoulder: "mixamorigLeftShoulder",
+    LeftUpperArm: "mixamorigLeftArm",
+    LeftLowerArm: "mixamorigLeftForeArm",
+    LeftHand: "mixamorigLeftHand",
 
     RightShoulder: "mixamorigRightShoulder",
     RightUpperArm: "mixamorigRightArm",
     RightLowerArm: "mixamorigRightForeArm",
     RightHand: "mixamorigRightHand",
 
-    LeftUpperLeg: "mixamorigLeftUpLeg", 
-    LeftLowerLeg: "mixamorigLeftLeg", 
-    LeftFoot: "mixamorigLeftFoot", 
-    LeftToeBase: "mixamorigLeftToeBase", 
+    LeftUpperLeg: "mixamorigLeftUpLeg",
+    LeftLowerLeg: "mixamorigLeftLeg",
+    LeftFoot: "mixamorigLeftFoot",
+    LeftToeBase: "mixamorigLeftToeBase", // Optional: for foot rotation
 
     RightUpperLeg: "mixamorigRightUpLeg",
     RightLowerLeg: "mixamorigRightLeg",
     RightFoot: "mixamorigRightFoot",
-    RightToeBase: "mixamorigRightToeBase",
+    RightToeBase: "mixamorigRightToeBase", // Optional: for foot rotation
 };
 
 // Store bone objects found in the current model
 let trackedBones = {};
-let skeletonRoot = null; 
-let initialPose = new Map(); 
-
+let skeletonRoot = null; // The object containing the skeleton/bones
+let initialPose = new Map(); // Stores initial local rotations/positions
+let modelUpVector = V_UP.clone(); // Default assumption
+let modelForwardVector = V_FORWARD.clone(); // Default assumption
+let initialPoseStored = false;
 
 // --- Core Mapping Function ---
 
@@ -83,190 +88,313 @@ let initialPose = new Map();
  */
 export function applyPoseToSkeleton(model, landmarks) {
     if (!model || !landmarks || landmarks.length === 0) {
-        return;
+        return; // No model or landmarks
     }
 
-    if (!skeletonRoot || !trackedBones[boneNameMap.Hips] || trackedBones[boneNameMap.Hips].root !== model) {
-        findBones(model);
-        if (!skeletonRoot) {
-            console.error("Could not find skeleton root or essential bones for pose mapping.");
-            return; 
-        }
-        storeInitialPose();
-        console.log("Tracked Bones:", trackedBones); 
-        console.log("Initial Pose Stored:", initialPose);
+    // Find bones and store initial pose ONCE per model load or tracking start
+    if (!initialPoseStored || trackedBones[boneNameMap.Hips]?.root !== model) {
+         findBonesAndSetup(model); // Renamed for clarity
+         if (!initialPoseStored) {
+             console.error("Pose Mapping: Could not find essential bones or store initial pose. Mapping aborted.");
+             return; // Stop if setup failed
+         }
     }
+
+    // Reset bones to initial pose before applying new rotations
+    // This prevents cumulative rotation errors and acts as a base
+    resetToInitialPose();
+
+    // --- Landmark Processing ---
+    // Convert MediaPipe landmarks (Right-handed Y-up) to THREE.js default (Right-handed Y-up)
+    // MediaPipe world landmarks: +X right, +Y up, +Z forward (away from camera)
+    // THREE.js default: +X right, +Y up, +Z towards camera
+    // Negate Z for conversion. We might also need to scale.
+    // Let's assume a scale factor for now, might need adjustment per model.
+    const scale = 1.0; // Adjust if the model scale doesn't match landmark scale
 
     const getLandmarkPos = (index) => {
         const lm = landmarks[index];
-        if (!lm) return new THREE.Vector3(); 
-        const scale = 1; 
-        return tempVec1.set(-lm.x * scale, lm.y * scale, -lm.z * scale);
+        // Add visibility check? lm.visibility > 0.5 ?
+        if (!lm) return null; // Return null if landmark missing
+        // Correcting coordinate system: Negate Z
+        return tempVec1.set(lm.x * scale, lm.y * scale, -lm.z * scale);
     };
 
-    const leftShoulderPos = getLandmarkPos(Landmark.LEFT_SHOULDER);
-    const rightShoulderPos = getLandmarkPos(Landmark.RIGHT_SHOULDER);
-    const leftElbowPos = getLandmarkPos(Landmark.LEFT_ELBOW);
-    const leftHipPos = getLandmarkPos(Landmark.LEFT_HIP);
-    const rightHipPos = getLandmarkPos(Landmark.RIGHT_HIP);
-    const leftKneePos = getLandmarkPos(Landmark.LEFT_KNEE);
-    const rightKneePos = getLandmarkPos(Landmark.RIGHT_KNEE);
-    const leftWristPos = getLandmarkPos(Landmark.LEFT_WRIST);
-    const rightWristPos = getLandmarkPos(Landmark.RIGHT_WRIST);
-    const leftAnklePos = getLandmarkPos(Landmark.LEFT_ANKLE);
-    const rightAnklePos = getLandmarkPos(Landmark.RIGHT_ANKLE);
+    // Get all required landmark positions
+    const hipL = getLandmarkPos(Landmark.LEFT_HIP);
+    const hipR = getLandmarkPos(Landmark.RIGHT_HIP);
+    const shoulderL = getLandmarkPos(Landmark.LEFT_SHOULDER);
+    const shoulderR = getLandmarkPos(Landmark.RIGHT_SHOULDER);
 
-    const hipCenter = tempVec2.copy(leftHipPos).add(rightHipPos).multiplyScalar(0.5);
-    const shoulderCenter = tempVec3.copy(leftShoulderPos).add(rightShoulderPos).multiplyScalar(0.5);
-    const spineDir = tempVec1.copy(shoulderCenter).sub(hipCenter).normalize();
-
-    if (trackedBones[boneNameMap.Hips]) {
-        rotateBoneToTarget(trackedBones[boneNameMap.Hips], spineDir, V_UP); 
-    }
-    if (trackedBones[boneNameMap.Spine]) {
-        rotateBoneToTarget(trackedBones[boneNameMap.Spine], spineDir, V_UP);
-    }
-    if (trackedBones[boneNameMap.Chest]) {
-        rotateBoneToTarget(trackedBones[boneNameMap.Chest], spineDir, V_UP); 
+    // Need at least hips and shoulders for basic torso alignment
+    if (!hipL || !hipR || !shoulderL || !shoulderR) {
+        // console.warn("Pose Mapping: Missing essential hip or shoulder landmarks.");
+        return; // Cannot proceed without these
     }
 
-    if (trackedBones[boneNameMap.LeftUpperArm]) {
-        const upperArmDir = tempVec1.copy(leftElbowPos).sub(leftShoulderPos).normalize();
-        rotateBoneToTarget(trackedBones[boneNameMap.LeftUpperArm], upperArmDir);
-    }
-    if (trackedBones[boneNameMap.LeftLowerArm]) {
-        const lowerArmDir = tempVec1.copy(leftWristPos).sub(leftElbowPos).normalize();
-        rotateBoneToTarget(trackedBones[boneNameMap.LeftLowerArm], lowerArmDir);
-    }
+    // Calculate reference points and directions
+    const hipCenter = tempVec2.copy(hipL).add(hipR).multiplyScalar(0.5);
+    const shoulderCenter = tempVec3.copy(shoulderL).add(shoulderR).multiplyScalar(0.5);
+    const spineDir = tempVec4.copy(shoulderCenter).sub(hipCenter).normalize(); // Direction from hips to shoulders
 
-    if (trackedBones[boneNameMap.RightUpperArm]) {
-        const upperArmDir = tempVec1.copy(rightElbowPos).sub(rightShoulderPos).normalize();
-        rotateBoneToTarget(trackedBones[boneNameMap.RightUpperArm], upperArmDir);
-    }
-    if (trackedBones[boneNameMap.RightLowerArm]) {
-        const lowerArmDir = tempVec1.copy(rightWristPos).sub(rightElbowPos).normalize();
-        rotateBoneToTarget(trackedBones[boneNameMap.RightLowerArm], lowerArmDir);
-    }
+    // --- Bone Rotation Application ---
+    // We use lookAt logic: point a bone's axis towards a target direction.
+    // We need to know which local axis of the bone points "forward" (e.g., along the bone length)
+    // and which points "up". This often requires inspecting the model or guessing.
+    // Common setup: Y-axis up, Z-axis forward (along bone).
 
-    if (trackedBones[boneNameMap.LeftUpperLeg]) {
-        const upperLegDir = tempVec1.copy(leftKneePos).sub(leftHipPos).normalize();
-        rotateBoneToTarget(trackedBones[boneNameMap.LeftUpperLeg], upperLegDir);
-    }
-    if (trackedBones[boneNameMap.LeftLowerLeg]) {
-        const lowerLegDir = tempVec1.copy(leftAnklePos).sub(leftKneePos).normalize();
-        rotateBoneToTarget(trackedBones[boneNameMap.LeftLowerLeg], lowerLegDir);
-    }
+    // Torso (Hips, Spine, Chest) - Align with the calculated spine direction
+    rotateBone(boneNameMap.Hips, spineDir, modelUpVector);
+    rotateBone(boneNameMap.Spine, spineDir, modelUpVector);
+    rotateBone(boneNameMap.Chest, spineDir, modelUpVector); // Align Chest too for better posture
+    // rotateBone(boneNameMap.UpperChest, spineDir, modelUpVector); // Optional: Align UpperChest as well
 
-    if (trackedBones[boneNameMap.RightUpperLeg]) {
-        const upperLegDir = tempVec1.copy(rightKneePos).sub(rightHipPos).normalize();
-        rotateBoneToTarget(trackedBones[boneNameMap.RightUpperLeg], upperLegDir);
-    }
-    if (trackedBones[boneNameMap.RightLowerLeg]) {
-        const lowerLegDir = tempVec1.copy(rightAnklePos).sub(rightKneePos).normalize();
-        rotateBoneToTarget(trackedBones[boneNameMap.RightLowerLeg], lowerLegDir);
-    }
+     // Arms
+    const elbowL = getLandmarkPos(Landmark.LEFT_ELBOW);
+    const wristL = getLandmarkPos(Landmark.LEFT_WRIST);
+    if (elbowL) rotateBone(boneNameMap.LeftUpperArm, tempVec1.copy(elbowL).sub(shoulderL).normalize());
+    if (elbowL && wristL) rotateBone(boneNameMap.LeftLowerArm, tempVec1.copy(wristL).sub(elbowL).normalize());
+    // Hand rotation would need wrist + finger landmarks
 
-    if (skeletonRoot) {
-        skeletonRoot.updateMatrixWorld(true);
-    }
+    const elbowR = getLandmarkPos(Landmark.RIGHT_ELBOW);
+    const wristR = getLandmarkPos(Landmark.RIGHT_WRIST);
+    if (elbowR) rotateBone(boneNameMap.RightUpperArm, tempVec1.copy(elbowR).sub(shoulderR).normalize());
+    if (elbowR && wristR) rotateBone(boneNameMap.RightLowerArm, tempVec1.copy(wristR).sub(elbowR).normalize());
+
+     // Legs
+    const kneeL = getLandmarkPos(Landmark.LEFT_KNEE);
+    const ankleL = getLandmarkPos(Landmark.LEFT_ANKLE);
+    if (kneeL) rotateBone(boneNameMap.LeftUpperLeg, tempVec1.copy(kneeL).sub(hipL).normalize());
+    if (kneeL && ankleL) rotateBone(boneNameMap.LeftLowerLeg, tempVec1.copy(ankleL).sub(kneeL).normalize());
+    // Foot rotation would need ankle + heel + toe landmarks
+
+    const kneeR = getLandmarkPos(Landmark.RIGHT_KNEE);
+    const ankleR = getLandmarkPos(Landmark.RIGHT_ANKLE);
+    if (kneeR) rotateBone(boneNameMap.RightUpperLeg, tempVec1.copy(kneeR).sub(hipR).normalize());
+    if (kneeR && ankleR) rotateBone(boneNameMap.RightLowerLeg, tempVec1.copy(ankleR).sub(kneeR).normalize());
+
+    // --- Head --- (Optional, requires more landmarks)
+     const nose = getLandmarkPos(Landmark.NOSE);
+     // Could try aligning Neck/Head based on shoulderCenter to nose/ear direction
+     // if (trackedBones[boneNameMap.Neck] && nose) {
+     //     const headDir = tempVec1.copy(nose).sub(shoulderCenter).normalize();
+     //     rotateBone(boneNameMap.Neck, headDir, spineDir); // Use spineDir as 'up' hint?
+     // }
+     // if (trackedBones[boneNameMap.Head] && nose) {
+     //    const headDir = tempVec1.copy(nose).sub(shoulderCenter).normalize();
+     //    rotateBone(boneNameMap.Head, headDir, spineDir);
+     // }
+
+    // Optional: Update world matrix manually if needed, though renderer usually handles this
+    // if (skeletonRoot) {
+    //     skeletonRoot.updateMatrixWorld(true);
+    // }
 }
 
 // --- Helper Functions ---
 
 /**
- * Finds and stores references to trackable bones within the model.
+ * Finds trackable bones, identifies the skeleton root, and stores the initial pose.
+ * Should be called once when a new model is loaded and tracking starts.
  * @param {THREE.Object3D} model
  */
-function findBones(model) {
+function findBonesAndSetup(model) {
+    console.log("Pose Mapping: Finding bones and storing initial pose...");
     trackedBones = {};
-    skeletonRoot = null; 
+    skeletonRoot = null;
     initialPose.clear();
+    initialPoseStored = false;
+    let foundEssential = false; // Track if Hips/Spine found
 
+    // Attempt to find the skeleton root automatically
     model.traverse((object) => {
-        if (object.isBone) {
-            if (!skeletonRoot && object.parent && !object.parent.isBone) {
-                if (object.parent === model || (object.parent.isObject3D && !object.parent.isBone)) {
-                    skeletonRoot = object.parent; 
-                    console.log("Skeleton Root identified:", skeletonRoot.name || skeletonRoot.type);
-                }
-            }
-            for (const key in boneNameMap) {
-                if (boneNameMap[key] === object.name) {
-                    trackedBones[boneNameMap[key]] = object;
-                    break; 
-                }
-            }
-        }
-        if (object.isSkinnedMesh && object.skeleton && !skeletonRoot) {
-            console.log("Found SkinnedMesh, checking its skeleton bones:", object.name);
-            object.skeleton.bones.forEach(bone => {
-                for (const key in boneNameMap) {
-                    if (boneNameMap[key] === bone.name && !trackedBones[boneNameMap[key]]) { 
-                        trackedBones[boneNameMap[key]] = bone;
-                    }
-                }
-            });
-            if(!skeletonRoot) skeletonRoot = object;
-        }
-
+        if (object.isSkinnedMesh && object.skeleton) {
+            skeletonRoot = object; // Common case: SkinnedMesh holds skeleton
+             console.log("Pose Mapping: Found skeleton root via SkinnedMesh:", object.name);
+             // Find bones within this specific skeleton
+             object.skeleton.bones.forEach(bone => {
+                findAndStoreBone(bone, model); // Pass model as potential root reference
+             });
+             return; // Assume first skinned mesh contains the relevant skeleton
+         }
+         // Fallback: check for bones directly under the model root if no SkinnedMesh found yet
+         if (!skeletonRoot && object.isBone && object.parent === model) {
+             skeletonRoot = model; // Assume model itself is the root if bones are direct children
+             console.log("Pose Mapping: Assuming model root contains bones directly.");
+             // Need to traverse again from model root to get all bones in this case
+             model.traverse(child => {
+                 if (child.isBone) findAndStoreBone(child, model);
+             });
+             return;
+         }
     });
-    if (!skeletonRoot) skeletonRoot = model;
+
+    // If still no root found, traverse the whole model for any bone
+    if (!skeletonRoot) {
+         model.traverse((object) => {
+             if (object.isBone) {
+                 if (!skeletonRoot) {
+                     // Find the highest-level bone's non-bone ancestor
+                     let current = object;
+                     while(current.parent && current.parent.isBone) {
+                         current = current.parent;
+                     }
+                     skeletonRoot = current.parent || model; // Root is parent of top-level bone(s)
+                     console.log("Pose Mapping: Found skeleton root via top-level bone:", skeletonRoot.name || "[Model Root]");
+                 }
+                 findAndStoreBone(object, skeletonRoot); // Store bone with found root
+             }
+         });
+    }
+
+    // Check if essential bones were found
+    if (trackedBones[boneNameMap.Hips] || trackedBones[boneNameMap.Spine]) {
+         foundEssential = true;
+    } else {
+         console.warn("Pose Mapping: Essential bones (Hips/Spine) not found in boneNameMap. Mapping might be incorrect.");
+         // Attempt to find *any* bone to use as root if Hips/Spine missing
+         if (!trackedBones[boneNameMap.Hips] && Object.keys(trackedBones).length > 0) {
+             const firstBoneName = Object.keys(trackedBones)[0];
+             console.warn(`Pose Mapping: Using fallback bone "${firstBoneName}" for root reference.`);
+             // This is unlikely to work well but prevents complete failure
+         }
+    }
+
+    // Store the initial pose if essential bones are present
+    if (foundEssential || Object.keys(trackedBones).length > 0) { // Store if *any* bones found
+        storeInitialPose();
+        initialPoseStored = true;
+        console.log("Pose Mapping: Initial pose stored for", initialPose.size, "bones.");
+        // console.log("Tracked Bones:", trackedBones);
+        // Determine model's orientation (assuming T-pose or A-pose)
+        determineModelOrientation();
+    } else {
+        console.error("Pose Mapping: No trackable bones found using boneNameMap.");
+    }
 }
 
-/**
- * Stores the initial local rotation and position of tracked bones.
- */
+/** Helper to store a found bone and its root reference */
+function findAndStoreBone(bone, root) {
+     for (const key in boneNameMap) {
+         if (boneNameMap[key] === bone.name && !trackedBones[boneNameMap[key]]) {
+             bone.root = root; // Attach root reference for check in applyPoseToSkeleton
+             trackedBones[boneNameMap[key]] = bone;
+             // console.log(`Pose Mapping: Found bone "${bone.name}" mapped to ${key}`);
+             break; // Found mapping for this bone
+         }
+     }
+}
+
+/** Stores the initial local rotation and position of tracked bones. */
 function storeInitialPose() {
     initialPose.clear();
     for (const name in trackedBones) {
         const bone = trackedBones[name];
-        initialPose.set(name, {
-            quaternion: bone.quaternion.clone(),
-            position: bone.position.clone() 
-        });
+        if (bone) { // Ensure bone exists
+             initialPose.set(name, {
+                 quaternion: bone.quaternion.clone(),
+                 position: bone.position.clone() // Store initial position too, though usually not modified
+             });
+        }
     }
 }
 
-/**
- * Resets tracked bones to their stored initial local pose.
- */
+/** Determines the model's likely Up and Forward vectors based on initial pose */
+function determineModelOrientation() {
+    // Try using Hips->Spine direction as Forward, and default Y as Up
+    const hips = trackedBones[boneNameMap.Hips];
+    const spine = trackedBones[boneNameMap.Spine];
+
+    if (hips && spine) {
+        hips.getWorldPosition(tempVec1); // World position of Hips
+        spine.getWorldPosition(tempVec2); // World position of Spine
+        modelForwardVector.subVectors(tempVec2, tempVec1).normalize();
+         // Assume default Y is up for now. More complex checks possible (e.g., using shoulders)
+         modelUpVector.set(0, 1, 0);
+        console.log("Pose Mapping: Estimated model Forward:", modelForwardVector.toArray().map(n=>n.toFixed(2)));
+    } else {
+        // Fallback to defaults if Hips/Spine missing
+        modelUpVector.set(0, 1, 0);
+        modelForwardVector.set(0, 0, 1);
+        console.log("Pose Mapping: Using default model orientation (Y-up, Z-forward).");
+    }
+    // Add check: if forward is too close to up, adjust up vector
+    if (Math.abs(modelForwardVector.dot(modelUpVector)) > 0.95) {
+        console.warn("Pose Mapping: Model forward vector is closely aligned with up vector. Adjusting Up to X-axis.");
+        modelUpVector.set(1, 0, 0); // Try X-axis as up
+    }
+}
+
+/** Resets tracked bones to their stored initial local pose. */
 function resetToInitialPose() {
-    if (initialPose.size === 0) return;
+    if (!initialPoseStored || initialPose.size === 0) return;
+
     for (const name in trackedBones) {
         const bone = trackedBones[name];
         const initial = initialPose.get(name);
-        if (initial) {
+        if (bone && initial) { // Check both exist
             bone.quaternion.copy(initial.quaternion);
+             // bone.position.copy(initial.position); // Usually don't reset position
         }
     }
 }
 
 /**
- * Rotates a bone to align its local Z-axis towards a target direction.
- * @param {THREE.Bone} bone - The bone to rotate.
+ * Rotates a bone to align its determined 'forward' axis towards a target direction.
+ * Applies rotation relative to the bone's initial orientation.
+ * @param {string} boneMappedName - The mapped name from boneNameMap (e.g., "mixamorigLeftArm").
  * @param {THREE.Vector3} targetDirection - The world-space direction vector to point towards.
- * @param {THREE.Vector3} [upVector=V_UP] - An optional up vector hint for orientation.
+ * @param {THREE.Vector3} [upHint=modelUpVector] - An optional world-space up vector hint for orientation.
  */
-function rotateBoneToTarget(bone, targetDirection, upVector = V_UP) {
-    if (!bone || targetDirection.lengthSq() < 0.001) return; 
+function rotateBone(boneMappedName, targetDirection, upHint = modelUpVector) {
+    const bone = trackedBones[boneMappedName];
+    const initial = initialPose.get(boneMappedName);
 
-    tempMatrix.identity(); 
-    const parent = bone.parent; 
+    // Basic checks
+    if (!bone || !initial || targetDirection.lengthSq() < 0.0001) {
+         // If targetDirection is zero, maybe keep initial rotation? Or log warning.
+         // console.warn(`Skipping rotation for ${boneMappedName}: Missing bone, initial pose, or zero target direction.`);
+        return;
+    }
+
+    // --- Calculate Target Rotation in World Frame ---
+    // Create a rotation matrix that aligns default Z-forward, Y-up to the targetDirection and upHint
+    tempMatrix.lookAt(targetDirection, tempVec1.set(0,0,0), upHint); // Position is origin, target is direction vector
+    const targetWorldQuaternion = tempQuat.setFromRotationMatrix(tempMatrix);
+
+    // --- Calculate Rotation in Parent Bone's Frame ---
+    // We need to convert the world target rotation into the local rotation relative to the parent bone.
+    const parent = bone.parent;
     if (parent) {
-        parent.updateMatrixWorld(); 
-        tempMatrix.copy(parent.matrixWorld).invert();
+        parent.updateMatrixWorld(); // Ensure parent matrix is up-to-date
+        tempMatrix.copy(parent.matrixWorld).invert(); // Get inverse world matrix of parent
+        tempQuat.setFromRotationMatrix(tempMatrix); // Convert inverse matrix to quaternion
+        targetWorldQuaternion.premultiply(tempQuat); // Apply parent's inverse world rotation
     }
+    // targetWorldQuaternion now represents the desired local rotation relative to the parent
 
-    const localTargetDir = tempVec2.copy(targetDirection).transformDirection(tempMatrix).normalize();
+    // --- Apply Rotation relative to Initial Pose ---
+    // The goal is: finalLocalRotation = initialLocalRotation * deltaRotation
+    // We calculated the desired finalLocalRotation (targetWorldQuaternion in local frame)
+    // So, deltaRotation = initialLocalRotation.inverse() * finalLocalRotation
+    tempQuat.copy(initial.quaternion).invert(); // Inverse of initial rotation
+    bone.quaternion.copy(targetWorldQuaternion).premultiply(tempQuat); // Apply delta: New = Initial * Delta = Initial * (Initial^-1 * Target) = Target
 
-    const boneAxis = V_UP.clone(); 
+    // Constraint checks (optional)
+    // Add limits if needed, e.g., clamp rotations for elbows/knees
+}
 
-    tempQuat.setFromUnitVectors(boneAxis, localTargetDir);
-
-    const initial = initialPose.get(bone.name);
-    if (initial) {
-        bone.quaternion.copy(initial.quaternion).multiply(tempQuat);
-    } else {
-        bone.quaternion.copy(tempQuat);
-    }
+/**
+ * Resets the internal state of the pose mapper (tracked bones, initial pose).
+ * Call this when loading a new model or stopping tracking.
+ */
+export function resetPoseMapping() {
+    console.log("Pose Mapping: Resetting internal state.");
+    trackedBones = {};
+    skeletonRoot = null;
+    initialPose.clear();
+    initialPoseStored = false;
+    // Reset orientation vectors to default? Or keep last known? Resetting is safer.
+    modelUpVector.set(0, 1, 0);
+    modelForwardVector.set(0, 0, 1);
 }
