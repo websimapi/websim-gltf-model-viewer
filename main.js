@@ -15,8 +15,10 @@ const loadingIndicator = document.getElementById('loading-indicator');
 const animationControlsDiv = document.getElementById('animation-controls');
 const animationDetailsDiv = document.getElementById('animation-details');
 const modelInfoDiv = document.getElementById('model-info');
+const generalInfoDiv = document.getElementById('general-model-info');
 const skeletonInfoDiv = document.getElementById('skeleton-info');
 const skinningInfoDiv = document.getElementById('skinning-info');
+let originalGltfData = null;
 
 // --- Initialization ---
 
@@ -75,7 +77,7 @@ function init() {
     modelInput.addEventListener('change', handleFileSelect);
     animationSelect.addEventListener('change', playSelectedAnimation);
 
-    clearModelInfoUI(); // Initialize UI state
+    clearModelInfoUI(); 
     animate();
 }
 
@@ -106,6 +108,7 @@ function handleFileSelect(event) {
     showLoading();
     clearScene();
     showError('');
+    originalGltfData = null; 
 
     if (fileName.endsWith('.glb') || fileName.endsWith('.fbx')) {
         reader.readAsArrayBuffer(file);
@@ -117,42 +120,69 @@ function handleFileSelect(event) {
 function loadModel(data, fileName) {
     const loadStartTime = performance.now();
     let loader;
+    let isGltf = false; 
 
-    const setupModel = (model, animations = []) => {
+    const setupModel = (model, animations = [], extraData = null) => {
         console.log(`Model "${fileName}" loaded in ${(performance.now() - loadStartTime).toFixed(2)} ms`);
         currentModel = model;
         currentAnimations = animations;
+        originalGltfData = isGltf ? extraData : null; 
 
         scene.add(currentModel);
 
         const skinnedMeshes = [];
-        let bones = [];
+        const meshes = [];
+        const materials = new Set(); 
+        let totalVertices = 0;
+        let totalFaces = 0; 
+        let rootBones = []; 
 
         currentModel.traverse((child) => {
             if (child.isMesh) {
+                meshes.push(child);
                 child.castShadow = true;
                 child.receiveShadow = true;
+                if (child.geometry) {
+                    const geometry = child.geometry;
+                    if (geometry.attributes.position) {
+                        totalVertices += geometry.attributes.position.count;
+                    }
+                    if (geometry.index) {
+                        totalFaces += geometry.index.count / 3;
+                    } else if (geometry.attributes.position) {
+                        totalFaces += geometry.attributes.position.count / 3; 
+                    }
+                }
+                 materials.add(child.material);
             }
             if (child.isSkinnedMesh) {
                 skinnedMeshes.push(child);
-                // Assuming the first skinned mesh's skeleton is representative for basic display
-                // A more robust solution might aggregate bones from all skeletons if there are multiple
-                if (bones.length === 0 && child.skeleton) {
-                     bones = child.skeleton.bones;
-                }
+                if (child.skeleton) {
+                     child.skeleton.bones.forEach(bone => {
+                         if (bone.parent && !bone.parent.isBone) {
+                            if (!rootBones.some(root => root.uuid === bone.uuid)) {
+                                rootBones.push(bone);
+                            }
+                         } else if (!bone.parent) { 
+                            if (!rootBones.some(root => root.uuid === bone.uuid)) {
+                                rootBones.push(bone);
+                            }
+                         }
+                     });
+                 }
             }
         });
 
-        // Update Model Info UI
-        displaySkeletonInfo(bones);
+        displayGeneralInfo(fileName, meshes, materials, totalVertices, totalFaces, originalGltfData);
+        displaySkeletonInfo(rootBones); 
         displaySkinningInfo(skinnedMeshes);
-        modelInfoDiv.style.display = 'block'; // Show the info section
+        modelInfoDiv.style.display = 'block'; 
 
         if (currentAnimations && currentAnimations.length > 0) {
             mixer = new THREE.AnimationMixer(currentModel);
             populateAnimationSelect();
-            playAnimation(currentAnimations[0]); // Autoplay first animation
-            animationControlsDiv.style.display = 'block'; // Show animation controls
+            playAnimation(currentAnimations[0]); 
+            animationControlsDiv.style.display = 'block'; 
         } else {
             console.log("No animations found in the model.");
             clearAnimationUI();
@@ -161,7 +191,7 @@ function loadModel(data, fileName) {
 
         centerAndFocusCamera();
         hideLoading();
-        modelInput.value = ''; 
+        modelInput.value = '';
     };
 
     const handleLoadError = (error) => {
@@ -177,17 +207,18 @@ function loadModel(data, fileName) {
         modelInput.value = '';
     };
 
-    clearScene(); // Clear previous model *before* starting load
+    clearScene(); 
 
     if (fileName.endsWith('.gltf') || fileName.endsWith('.glb')) {
         loader = new GLTFLoader();
+        isGltf = true; 
         const dracoLoader = new DRACOLoader();
         dracoLoader.setDecoderPath(config.dracoDecoderPath);
         loader.setDRACOLoader(dracoLoader);
 
         try {
             loader.parse(data, '', (gltf) => {
-                setupModel(gltf.scene, gltf.animations);
+                setupModel(gltf.scene, gltf.animations, gltf);
             }, handleLoadError);
         } catch (error) {
             handleLoadError(error);
@@ -195,10 +226,9 @@ function loadModel(data, fileName) {
 
     } else if (fileName.endsWith('.fbx')) {
         loader = new FBXLoader();
+        isGltf = false;
         try {
             const fbxModel = loader.parse(data, ''); 
-            // FBXLoader might return a Group containing the mesh and potentially other helpers
-            // Ensure we're adding the primary visual object to the scene
             const modelToAdd = fbxModel.isGroup ? fbxModel : new THREE.Group().add(fbxModel);
             setupModel(modelToAdd, fbxModel.animations); 
         } catch(error) {
@@ -254,7 +284,7 @@ function populateAnimationSelect() {
             animationSelect.appendChild(option);
         });
         animationSelect.selectedIndex = 0; 
-        displayAnimationDetails(currentAnimations[0]); // Show details for the initially selected one
+        displayAnimationDetails(currentAnimations[0]); 
     } else {
         clearAnimationUI();
     }
@@ -267,10 +297,10 @@ function playSelectedAnimation() {
     if (!isNaN(selectedIndex) && selectedIndex >= 0 && selectedIndex < currentAnimations.length) {
         const clip = currentAnimations[selectedIndex];
         playAnimation(clip);
-        displayAnimationDetails(clip); // Update details display
+        displayAnimationDetails(clip); 
     } else if (currentAnimations.length > 0) {
         console.warn("Invalid animation selection index:", animationSelect.value);
-        clearAnimationUI(true); // Keep dropdown but clear details
+        clearAnimationUI(true); 
     }
 }
 
@@ -313,50 +343,126 @@ function displayAnimationDetails(clip) {
 
 // --- UI Display for Model Info ---
 
-function displaySkeletonInfo(bones) {
-    skeletonInfoDiv.innerHTML = '<h4>Skeleton / Armature</h4>'; // Clear previous
-    if (!bones || bones.length === 0) {
-        skeletonInfoDiv.innerHTML += '<p>No skeleton data found in model.</p>';
+function displayGeneralInfo(fileName, meshes, materials, vertices, faces, gltfData) {
+    generalInfoDiv.innerHTML = '<h4>General Info</h4>'; 
+
+    const list = document.createElement('ul');
+
+    let listItem = document.createElement('li');
+    listItem.innerHTML = `<strong>File Name:</strong> ${fileName}`;
+    list.appendChild(listItem);
+
+    listItem = document.createElement('li');
+    listItem.innerHTML = `<strong>Meshes:</strong> ${meshes.length}`;
+    list.appendChild(listItem);
+
+    listItem = document.createElement('li');
+    listItem.innerHTML = `<strong>Materials:</strong> ${materials.size}`; 
+    list.appendChild(listItem);
+
+    listItem = document.createElement('li');
+    listItem.innerHTML = `<strong>Vertices:</strong> ${vertices.toLocaleString()}`;
+    list.appendChild(listItem);
+
+    listItem = document.createElement('li');
+    listItem.innerHTML = `<strong>Faces (Triangles):</strong> ${Math.round(faces).toLocaleString()}`;
+    list.appendChild(listItem);
+
+    if (gltfData && gltfData.parser && gltfData.parser.json) {
+        const json = gltfData.parser.json;
+        if (json.asset && json.asset.generator) {
+            listItem = document.createElement('li');
+            listItem.innerHTML = `<strong>Generator:</strong> ${json.asset.generator}`;
+            list.appendChild(listItem);
+        }
+        const hasDraco = gltfData.parser.extensionsUsed && gltfData.parser.extensionsUsed.includes('KHR_draco_mesh_compression');
+        listItem = document.createElement('li');
+        listItem.innerHTML = `<strong>Draco Compressed:</strong> ${hasDraco ? 'Yes' : 'No'}`;
+        list.appendChild(listItem);
+    }
+
+    generalInfoDiv.appendChild(list);
+}
+
+function displaySkeletonInfo(rootBones) {
+    skeletonInfoDiv.innerHTML = '<h4>Skeleton / Armature Hierarchy</h4>'; 
+
+    if (!rootBones || rootBones.length === 0) {
+        skeletonInfoDiv.innerHTML += '<p>No skeleton data or root bones found.</p>';
         return;
     }
 
-    const list = document.createElement('ul');
-    bones.forEach(bone => {
+    const rootList = document.createElement('ul');
+    rootList.style.paddingLeft = '0'; 
+
+    let totalBones = 0;
+
+    function buildBoneList(bone, parentElement, level) {
+        totalBones++;
         const listItem = document.createElement('li');
-        listItem.textContent = `${bone.name} (ID: ${bone.id})`;
-        // Could potentially add parent/child info here later for a tree view
-        list.appendChild(listItem);
+        listItem.style.marginLeft = `${level * 15}px`; 
+        listItem.innerHTML = `<span title="ID: ${bone.id}"> ${bone.name || 'Unnamed Bone'}</span>`; 
+        parentElement.appendChild(listItem);
+
+        if (bone.children.length > 0) {
+            const childrenList = document.createElement('ul');
+             childrenList.style.paddingLeft = '0'; 
+             listItem.appendChild(childrenList); 
+            bone.children.forEach(childBone => {
+                if (childBone.isBone) {
+                    buildBoneList(childBone, childrenList, level + 1);
+                }
+            });
+        }
+    }
+
+    rootBones.forEach(bone => {
+        buildBoneList(bone, rootList, 0);
     });
-    skeletonInfoDiv.appendChild(list);
-     skeletonInfoDiv.innerHTML += `<p>Total Bones: ${bones.length}</p>`;
+
+    skeletonInfoDiv.appendChild(rootList);
+    skeletonInfoDiv.innerHTML += `<p style="margin-top: 10px;"><strong>Total Bones:</strong> ${totalBones}</p>`;
 }
 
 function displaySkinningInfo(skinnedMeshes) {
-    skinningInfoDiv.innerHTML = '<h4>Skinned Meshes</h4>'; // Clear previous
+    skinningInfoDiv.innerHTML = '<h4>Skinned Meshes</h4>'; 
+
     if (!skinnedMeshes || skinnedMeshes.length === 0) {
         skinningInfoDiv.innerHTML += '<p>No skinned meshes found in model.</p>';
         return;
     }
 
     const list = document.createElement('ul');
-    skinnedMeshes.forEach(mesh => {
+    skinnedMeshes.forEach((mesh, index) => {
         const listItem = document.createElement('li');
         const boneCount = mesh.skeleton ? mesh.skeleton.bones.length : 'N/A';
-        listItem.textContent = `${mesh.name || 'Unnamed Mesh'} (Bones: ${boneCount})`;
+        const materialName = Array.isArray(mesh.material)
+            ? mesh.material.map(m => m.name || 'Unnamed Material').join(', ')
+            : (mesh.material?.name || 'Unnamed Material');
+
+        listItem.innerHTML = `
+            <strong>${mesh.name || `Skinned Mesh ${index + 1}`}</strong>
+            <ul style="padding-left: 15px; font-size: 0.9em;">
+                <li>Bones: ${boneCount}</li>
+                <li>Material(s): ${materialName}</li>
+                 <li>Vertices: ${mesh.geometry.attributes.position ? mesh.geometry.attributes.position.count.toLocaleString() : 'N/A'}</li>
+            </ul>
+        `;
         list.appendChild(listItem);
     });
      skinningInfoDiv.appendChild(list);
 }
 
 function clearModelInfoUI() {
-    modelInfoDiv.style.display = 'none'; // Hide the whole section
-    skeletonInfoDiv.innerHTML = '<h4>Skeleton / Armature</h4><p>Load a model to see skeleton data.</p>';
+    modelInfoDiv.style.display = 'none'; 
+    generalInfoDiv.innerHTML = '<h4>General Info</h4><p>Load a model to see details.</p>'; 
+    skeletonInfoDiv.innerHTML = '<h4>Skeleton / Armature Hierarchy</h4><p>Load a model to see skeleton data.</p>';
     skinningInfoDiv.innerHTML = '<h4>Skinned Meshes</h4><p>Load a model to see skinning data.</p>';
 }
 
 function clearAnimationUI(keepSelect = false) {
      if (!keepSelect) {
-         animationControlsDiv.style.display = 'none'; // Hide section
+         animationControlsDiv.style.display = 'none'; 
          animationSelect.innerHTML = '<option>Load a model first</option>';
          animationSelect.disabled = true;
      }
@@ -372,8 +478,6 @@ function clearScene() {
     }
     if (mixer) {
          mixer.stopAllAction();
-         // Uncaching might need careful handling depending on the loader/model structure
-         // Let's be cautious and potentially skip uncacheRoot if it causes issues.
          try {
              if (currentModel) mixer.uncacheRoot(currentModel);
          } catch (e) {
@@ -385,31 +489,36 @@ function clearScene() {
     if (currentModel) {
         scene.remove(currentModel);
 
-        currentModel.traverse((child) => {
-            if (child.isMesh) {
-                if(child.geometry) {
-                    child.geometry.dispose();
+        currentModel.traverse((object) => {
+            if (object.isMesh) {
+                if (object.geometry) {
+                    object.geometry.dispose();
+                     console.log(`Disposed geometry for mesh: ${object.name || object.uuid}`);
                 }
-                if (child.material) {
-                    // Materials can be arrays
-                    if (Array.isArray(child.material)) {
-                        child.material.forEach(cleanMaterial);
+
+                if (object.material) {
+                    if (Array.isArray(object.material)) {
+                         object.material.forEach(material => cleanMaterial(material));
                     } else {
-                         cleanMaterial(child.material);
+                         cleanMaterial(object.material);
                     }
                 }
+            } else if (object.isLight) {
+                 if(object.shadow && object.shadow.map) {
+                     object.shadow.map.dispose();
+                     console.log(`Disposed shadow map for light: ${object.name || object.uuid}`);
+                 }
             }
-            // Dispose other potential resources like textures not directly on materials
-            // if (child.isTexture) { child.dispose(); } // Less common at this level
         });
+
         console.log("Previous model resources disposed.");
         currentModel = null;
     }
 
+    originalGltfData = null; 
     currentAnimations = [];
-    clearAnimationUI(); // Reset animation UI elements
-    clearModelInfoUI(); // Reset model info UI elements
-
+    clearAnimationUI(); 
+    clearModelInfoUI(); 
 
     console.log("Scene cleared. Renderer info:", renderer.info.memory);
 }
@@ -455,7 +564,6 @@ function onWindowResize() {
 function animate() {
     requestAnimationFrame(animate);
     renderLoop();
-
 }
 
 function renderLoop() {
