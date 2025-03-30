@@ -35,8 +35,8 @@
             box-shadow: 0 4px 10px rgba(0,0,0,0.15);
             max-width: 320px; /* Limit width */
             z-index: 1; /* Ensure controls are above canvas */
-            backdrop-filter: blur(5px); /* Optional: frosted glass effect */
-            -webkit-backdrop-filter: blur(5px);
+            /* backdrop-filter: blur(5px);  Optional: frosted glass effect */
+            /* -webkit-backdrop-filter: blur(5px); */
         }
         #controls label {
             display: block;
@@ -80,6 +80,22 @@
         }
         #controls input[type="file"]::file-selector-button:hover {
             background-color: #0056b3;
+        }
+
+        /* Model Info Display */
+        #model-info {
+            margin-top: 15px; /* Space above the info */
+            padding-top: 10px; /* Space inside */
+            border-top: 1px solid #ddd; /* Separator line */
+            font-size: 0.85em;
+            color: #555;
+            line-height: 1.6;
+            display: none; /* Hidden by default */
+        }
+        #model-info br {
+            display: block; /* Make <br> actually create new lines visually */
+            margin-bottom: 4px;
+            content: ""; /* Required for display: block on br */
         }
 
         /* Error Message Styling */
@@ -157,6 +173,9 @@
         <select id="animationSelect" disabled>
             <option>Load a model first</option>
         </select>
+
+        <!-- Area to display basic model info -->
+        <div id="model-info"></div> 
     </div>
 
     <!-- Error Message Area -->
