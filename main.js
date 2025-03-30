@@ -4,7 +4,6 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import config from './config.js';
-// Import UI functions
 import {
     displayGeneralInfo,
     displaySkeletonInfo,
@@ -15,21 +14,28 @@ import {
     clearAnimationUI,
     showError,
     showLoading,
-    hideLoading
+    hideLoading,
+    updateTrackingUI, 
+    updateRecordingUI 
 } from './ui.js';
-
+import { setupBodyTracking, startWebcam, stopWebcam, getLatestPose } from './bodyTracking.js';
+import { applyPoseToSkeleton } from './poseMapping.js'; 
 
 let scene, camera, renderer, clock, mixer, currentModel, currentAction;
 let controls;
 let currentAnimations = [];
 const modelInput = document.getElementById('modelInput');
 const animationSelect = document.getElementById('animationSelect');
-// Removed UI element variables, handled in ui.js
+const toggleWebcamButton = document.getElementById('toggleWebcamButton');
+const recordAnimationButton = document.getElementById('recordAnimationButton');
+
 let originalGltfData = null;
+let isTracking = false;
+let isRecording = false;
+let recordedPoseData = []; 
+let skeletonHelper; 
 
-// --- Initialization ---
-
-function init() {
+async function init() {
     scene = new THREE.Scene();
     scene.background = new THREE.Color(config.backgroundColor);
 
@@ -79,15 +85,26 @@ function init() {
     ground.receiveShadow = true;
     scene.add(ground);
 
+    try {
+        await setupBodyTracking(onPoseResults);
+        console.log("Body tracking initialized.");
+    } catch (error) {
+        console.error("Failed to initialize body tracking:", error);
+        showError("Failed to initialize body tracking. Webcam features disabled.");
+        updateTrackingUI(false, false, "Error initializing tracker."); 
+    }
+
     window.addEventListener('resize', onWindowResize);
     modelInput.addEventListener('change', handleFileSelect);
     animationSelect.addEventListener('change', playSelectedAnimation);
+    toggleWebcamButton.addEventListener('click', toggleWebcamTracking);
+    recordAnimationButton.addEventListener('click', toggleRecording);
 
-    clearModelInfoUI(); // Use imported function
+    clearModelInfoUI(); 
+    updateTrackingUI(false, false); 
+    updateRecordingUI(false); 
     animate();
 }
-
-// --- File Handling & Loading ---
 
 function handleFileSelect(event) {
     const file = event.target.files[0];
@@ -95,7 +112,7 @@ function handleFileSelect(event) {
 
     const fileName = file.name.toLowerCase();
     if (!fileName.endsWith('.gltf') && !fileName.endsWith('.glb') && !fileName.endsWith('.fbx')) {
-        showError('Unsupported file type. Please load a .gltf, .glb, or .fbx file.'); // Use imported function
+        showError('Unsupported file type. Please load a .gltf, .glb, or .fbx file.');
         modelInput.value = '';
         return;
     }
@@ -107,14 +124,19 @@ function handleFileSelect(event) {
     };
     reader.onerror = (e) => {
          console.error("FileReader error:", e);
-         showError('Error reading file.'); // Use imported function
-         hideLoading(); // Use imported function
+         showError('Error reading file.');
+         hideLoading();
     }
 
-    showLoading(); // Use imported function
-    clearScene();
-    showError(''); // Use imported function
+    showLoading();
+    clearScene(); 
+    showError('');
     originalGltfData = null;
+    isTracking = false; 
+    isRecording = false; 
+    updateTrackingUI(false, false); 
+    updateRecordingUI(false); 
+    stopWebcam(); 
 
     if (fileName.endsWith('.glb') || fileName.endsWith('.fbx')) {
         reader.readAsArrayBuffer(file);
@@ -165,8 +187,7 @@ function loadModel(data, fileName) {
                 skinnedMeshes.push(child);
                 if (child.skeleton) {
                      child.skeleton.bones.forEach(bone => {
-                        // Find bones that are direct children of the scene/group or whose parent isn't a bone
-                         if (!bone.parent || !bone.parent.isBone || bone.parent === currentModel) {
+                        if (!bone.parent || !bone.parent.isBone || bone.parent === currentModel) {
                             if (!rootBones.some(root => root.uuid === bone.uuid)) {
                                 rootBones.push(bone);
                             }
@@ -176,25 +197,32 @@ function loadModel(data, fileName) {
             }
         });
 
-        // Call UI functions
+        let hasSkeleton = false;
+        currentModel.traverse((child) => {
+             if (child.isSkinnedMesh && child.skeleton) {
+                 hasSkeleton = true;
+             }
+        });
+
+        updateTrackingUI(false, hasSkeleton);
+
         displayGeneralInfo(fileName, meshes, materials, totalVertices, totalFaces, originalGltfData);
         displaySkeletonInfo(rootBones);
         displaySkinningInfo(skinnedMeshes);
 
-
         if (currentAnimations && currentAnimations.length > 0) {
             mixer = new THREE.AnimationMixer(currentModel);
-            populateAnimationSelect(currentAnimations); // Use imported function
+            populateAnimationSelect(currentAnimations);
             playAnimation(currentAnimations[0]);
-            displayAnimationDetails(currentAnimations[0]); // Display details for the first anim
+            displayAnimationDetails(currentAnimations[0]);
         } else {
             console.log("No animations found in the model.");
-            clearAnimationUI(); // Use imported function
-             mixer = null;
+            clearAnimationUI();
+            mixer = null;
         }
 
         centerAndFocusCamera();
-        hideLoading(); // Use imported function
+        hideLoading();
         modelInput.value = '';
     };
 
@@ -206,8 +234,8 @@ function loadModel(data, fileName) {
         } else if (error.message && error.message.includes('Magic')) {
              errorMsg += ' This might indicate a corrupt binary file (GLB/FBX).';
         }
-        showError(errorMsg + ' Check console for details.'); // Use imported function
-        hideLoading(); // Use imported function
+        showError(errorMsg + ' Check console for details.'); 
+        hideLoading();
         modelInput.value = '';
     };
 
@@ -274,10 +302,6 @@ function centerAndFocusCamera() {
     controls.update(); 
 }
 
-// --- Animation Control ---
-
-// Removed populateAnimationSelect - moved to ui.js
-
 function playSelectedAnimation() {
     if (!mixer) return;
 
@@ -285,10 +309,10 @@ function playSelectedAnimation() {
     if (!isNaN(selectedIndex) && selectedIndex >= 0 && selectedIndex < currentAnimations.length) {
         const clip = currentAnimations[selectedIndex];
         playAnimation(clip);
-        displayAnimationDetails(clip); // Use imported function
+        displayAnimationDetails(clip); 
     } else if (currentAnimations.length > 0) {
         console.warn("Invalid animation selection index:", animationSelect.value);
-        clearAnimationUI(true); // Use imported function (keep select visible)
+        clearAnimationUI(true); 
     }
 }
 
@@ -313,11 +337,174 @@ function playAnimation(clip) {
     currentAction = newAction;
 }
 
-// Removed displayAnimationDetails - moved to ui.js
+async function toggleWebcamTracking() {
+    if (!currentModel) {
+        showError("Load a model before starting webcam tracking.");
+        return;
+    }
 
-// --- Scene Management & Cleanup ---
+    isTracking = !isTracking;
+    updateTrackingUI(isTracking, true); 
+    updateRecordingUI(isRecording, isTracking); 
+
+    if (isTracking) {
+        try {
+            await startWebcam();
+            console.log("Webcam started.");
+            controls.enabled = false; 
+            if (currentAction) {
+                currentAction.stop();
+                mixer?.stopAllAction(); 
+                currentAction = null;
+                animationSelect.value = ''; 
+                clearAnimationDetails();
+            }
+            animationSelect.disabled = true; 
+        } catch (error) {
+            console.error("Failed to start webcam:", error);
+            showError(`Failed to start webcam: ${error.message}`);
+            isTracking = false;
+            updateTrackingUI(false, true); 
+            updateRecordingUI(false, false); 
+            controls.enabled = true; 
+            animationSelect.disabled = !(currentAnimations && currentAnimations.length > 0);
+        }
+    } else {
+        stopWebcam();
+        console.log("Webcam stopped.");
+        isRecording = false; 
+        updateRecordingUI(false, false); 
+        controls.enabled = true;
+        animationSelect.disabled = !(currentAnimations && currentAnimations.length > 0);
+    }
+}
+
+function onPoseResults(landmarks) {
+    if (!isTracking || !currentModel || !landmarks) return;
+
+    applyPoseToSkeleton(currentModel, landmarks);
+
+    if (isRecording) {
+        capturePoseFrame();
+    }
+}
+
+function toggleRecording() {
+    if (!isTracking) {
+        showError("Start webcam tracking before recording.");
+        return;
+    }
+
+    isRecording = !isRecording;
+    updateRecordingUI(isRecording, true);
+
+    if (isRecording) {
+        recordedPoseData = []; 
+        console.log("Recording started.");
+        capturePoseFrame();
+    } else {
+        console.log(`Recording stopped. Captured ${recordedPoseData.length} frames.`);
+        createAnimationClipFromRecording();
+    }
+}
+
+function capturePoseFrame() {
+    if (!currentModel) return;
+
+    const frameData = {
+        time: clock.elapsedTime, 
+        bones: []
+    };
+
+    currentModel.traverse((object) => {
+        if (object.isBone) {
+            frameData.bones.push({
+                name: object.name,
+                position: object.position.clone(),
+                quaternion: object.quaternion.clone(),
+            });
+        }
+    });
+    recordedPoseData.push(frameData);
+}
+
+function createAnimationClipFromRecording() {
+    if (recordedPoseData.length < 2) {
+        console.warn("Not enough frames recorded to create an animation clip.");
+        recordedPoseData = []; 
+        return;
+    }
+
+    const tracks = [];
+    const firstFrame = recordedPoseData[0];
+    const startTime = firstFrame.time;
+    const duration = recordedPoseData[recordedPoseData.length - 1].time - startTime;
+
+    firstFrame.bones.forEach(boneData => {
+        const positionTimes = [];
+        const positionValues = [];
+        const quaternionTimes = [];
+        const quaternionValues = [];
+
+        recordedPoseData.forEach(frame => {
+            const boneInFrame = frame.bones.find(b => b.name === boneData.name);
+            if (boneInFrame) {
+                const time = frame.time - startTime; 
+
+                positionTimes.push(time);
+                positionValues.push(boneInFrame.position.x, boneInFrame.position.y, boneInFrame.position.z);
+
+                quaternionTimes.push(time);
+                quaternionValues.push(boneInFrame.quaternion.x, boneInFrame.quaternion.y, boneInFrame.quaternion.z, boneInFrame.quaternion.w);
+            }
+        });
+
+        if (positionTimes.length > 0) {
+            const posTrack = new THREE.VectorKeyframeTrack(`${boneData.name}.position`, positionTimes, positionValues);
+            tracks.push(posTrack);
+        }
+        if (quaternionTimes.length > 0) {
+            const quatTrack = new THREE.QuaternionKeyframeTrack(`${boneData.name}.quaternion`, quaternionTimes, quaternionValues);
+            tracks.push(quatTrack);
+        }
+    });
+
+    if (tracks.length === 0) {
+        console.warn("No valid bone tracks generated from recording.");
+        recordedPoseData = [];
+        return;
+    }
+
+    const clip = new THREE.AnimationClip(`Recorded Pose ${Date.now()}`, duration, tracks);
+    console.log("Created AnimationClip:", clip);
+
+    if (!currentAnimations) currentAnimations = [];
+    currentAnimations.push(clip);
+
+    if (!mixer && currentModel) {
+        mixer = new THREE.AnimationMixer(currentModel); 
+    }
+
+    populateAnimationSelect(currentAnimations); 
+    animationSelect.value = currentAnimations.length - 1; 
+    playSelectedAnimation(); 
+    recordedPoseData = []; 
+
+    updateRecordingUI(false, isTracking);
+}
 
 function clearScene() {
+    if (isTracking) {
+         toggleWebcamTracking(); 
+     }
+     isRecording = false;
+     recordedPoseData = [];
+
+    if (skeletonHelper) {
+         scene.remove(skeletonHelper);
+         skeletonHelper = null;
+     }
+
     if (currentAction) {
         currentAction.stop();
         currentAction = null;
@@ -339,7 +526,6 @@ function clearScene() {
             if (object.isMesh) {
                 if (object.geometry) {
                     object.geometry.dispose();
-                     // console.log(`Disposed geometry for mesh: ${object.name || object.uuid}`); // Less verbose logging
                 }
 
                 if (object.material) {
@@ -352,7 +538,6 @@ function clearScene() {
             } else if (object.isLight) {
                  if(object.shadow && object.shadow.map) {
                      object.shadow.map.dispose();
-                     // console.log(`Disposed shadow map for light: ${object.name || object.uuid}`); // Less verbose logging
                  }
             }
         });
@@ -363,10 +548,11 @@ function clearScene() {
 
     originalGltfData = null;
     currentAnimations = [];
-    clearAnimationUI(); // Use imported function
-    clearModelInfoUI(); // Use imported function
+    clearAnimationUI(); 
+    clearModelInfoUI(); 
+    updateTrackingUI(false, false); 
+    updateRecordingUI(false); 
 
-    // Force garbage collection hint (browser-dependent)
     if (typeof window.gc === 'function') {
         window.gc();
     }
@@ -386,15 +572,6 @@ function cleanMaterial(material) {
     }
 }
 
-// --- UI Feedback ---
-
-// Removed showError - moved to ui.js
-// Removed showLoading - moved to ui.js
-// Removed hideLoading - moved to ui.js
-
-
-// --- Core Loop & Resize ---
-
 function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
@@ -409,16 +586,17 @@ function animate() {
 function renderLoop() {
     const delta = clock.getDelta();
 
-    if (mixer) {
+    if (mixer && !isTracking) { 
         mixer.update(delta);
     }
 
-    controls.update(); 
+    if (controls.enabled) {
+        controls.update();
+    }
 
     renderer.render(scene, camera);
 }
 
-// --- Initialization Call ---
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
 } else {

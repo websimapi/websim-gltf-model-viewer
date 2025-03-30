@@ -15,6 +15,13 @@ const modelInfoDiv = document.getElementById('model-info');
 const generalInfoDiv = document.getElementById('general-model-info');
 const skeletonInfoDiv = document.getElementById('skeleton-info');
 const skinningInfoDiv = document.getElementById('skinning-info');
+// New Elements
+const toggleWebcamButton = document.getElementById('toggleWebcamButton');
+const recordAnimationButton = document.getElementById('recordAnimationButton');
+const trackingStatusDiv = document.getElementById('tracking-status');
+const webcamContainer = document.getElementById('webcam-container');
+const webcamVideo = document.getElementById('webcamVideo'); // Needed by bodyTracking.js
+const webcamCanvas = document.getElementById('webcamCanvas'); // Needed by bodyTracking.js
 
 
 // --- UI Update Functions ---
@@ -203,6 +210,63 @@ export function clearAnimationUI(keepSelect = false) {
 export function clearAnimationDetails() {
      animationDetailsDiv.innerHTML = '<p>No animation selected or details available.</p>';
 }
+
+// --- Body Tracking & Recording UI ---
+
+/**
+ * Updates the UI elements related to webcam tracking.
+ * @param {boolean} isTrackingActive - Whether tracking is currently active.
+ * @param {boolean} isTrackingEnabled - Whether tracking *can* be enabled (e.g., model loaded).
+ * @param {string} [statusText=null] - Optional text for the status indicator.
+ */
+export function updateTrackingUI(isTrackingActive, isTrackingEnabled, statusText = null) {
+    toggleWebcamButton.disabled = !isTrackingEnabled;
+
+    if (isTrackingActive) {
+        toggleWebcamButton.textContent = 'Disable Webcam Tracking';
+        toggleWebcamButton.classList.add('button-danger');
+        webcamContainer.style.display = 'block'; // Show webcam view
+        if (!statusText) statusText = 'Tracking active...';
+    } else {
+        toggleWebcamButton.textContent = 'Enable Webcam Tracking';
+        toggleWebcamButton.classList.remove('button-danger');
+        webcamContainer.style.display = 'none'; // Hide webcam view
+        if (!statusText) {
+            statusText = isTrackingEnabled ? 'Tracking inactive.' : 'Load a rigged model to enable tracking.';
+        }
+    }
+    trackingStatusDiv.textContent = statusText;
+}
+
+/**
+ * Updates the UI elements related to animation recording.
+ * @param {boolean} isRecordingActive - Whether recording is currently active.
+ * @param {boolean} [isRecordingEnabled=isRecordingActive] - Whether recording *can* be started (defaults to true if already recording). Usually depends on tracking being active.
+ */
+export function updateRecordingUI(isRecordingActive, isRecordingEnabled = isRecordingActive) {
+    recordAnimationButton.disabled = !isRecordingEnabled;
+
+    if (isRecordingActive) {
+        recordAnimationButton.textContent = 'Stop Recording';
+        recordAnimationButton.classList.add('button-danger');
+        recordAnimationButton.classList.remove('button-success');
+    } else {
+        recordAnimationButton.textContent = 'Start Recording';
+        recordAnimationButton.classList.remove('button-danger');
+        recordAnimationButton.classList.add('button-success');
+    }
+}
+
+/** Gets the webcam video element (needed by bodyTracking.js) */
+export function getWebcamVideoElement() {
+    return webcamVideo;
+}
+
+/** Gets the webcam canvas element (needed by bodyTracking.js) */
+export function getWebcamCanvasElement() {
+    return webcamCanvas;
+}
+
 
 // --- Feedback UI (Error/Loading) ---
 
