@@ -33,10 +33,21 @@
             padding: 15px 20px;
             border-radius: 8px;
             box-shadow: 0 4px 10px rgba(0,0,0,0.15);
-            max-width: 320px; /* Limit width */
+            max-width: 350px; /* Adjusted width slightly */
+            max-height: calc(100vh - 30px); /* Limit height */
+            overflow-y: auto; /* Add scroll if content overflows */
             z-index: 1; /* Ensure controls are above canvas */
-            /* backdrop-filter: blur(5px);  Optional: frosted glass effect */
-            /* -webkit-backdrop-filter: blur(5px); */
+            backdrop-filter: blur(5px); /* Optional: frosted glass effect */
+            -webkit-backdrop-filter: blur(5px);
+        }
+        #controls h3 {
+            margin-top: 15px;
+            margin-bottom: 8px;
+            font-size: 1em;
+            font-weight: 600;
+            color: #333;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 5px;
         }
         #controls label {
             display: block;
@@ -82,21 +93,36 @@
             background-color: #0056b3;
         }
 
-        /* Model Info Display */
-        #model-info {
-            margin-top: 15px; /* Space above the info */
-            padding-top: 10px; /* Space inside */
-            border-top: 1px solid #ddd; /* Separator line */
+        /* Model Info Sections */
+        .model-info-section {
+            margin-bottom: 15px;
             font-size: 0.85em;
-            color: #555;
-            line-height: 1.6;
-            display: none; /* Hidden by default */
+            max-height: 200px; /* Limit height for scrollable lists */
+            overflow-y: auto; /* Make lists scrollable */
+            background: rgba(0, 0, 0, 0.02); /* Subtle background */
+            border: 1px solid #eee;
+            border-radius: 4px;
+            padding: 10px;
         }
-        #model-info br {
-            display: block; /* Make <br> actually create new lines visually */
-            margin-bottom: 4px;
-            content: ""; /* Required for display: block on br */
+        .model-info-section ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
         }
+        .model-info-section li {
+            padding: 3px 0;
+            border-bottom: 1px dashed #eee; /* Separator */
+        }
+         .model-info-section li:last-child {
+             border-bottom: none;
+         }
+        .model-info-section pre { /* For potentially detailed output */
+             white-space: pre-wrap;
+             word-wrap: break-word;
+             font-size: 0.9em;
+             max-height: 150px; /* Limit pre height */
+             overflow: auto;
+         }
 
         /* Error Message Styling */
         #error-message {
@@ -169,13 +195,28 @@
         <label for="modelInput">Load GLTF/GLB/FBX Model:</label>
         <input type="file" id="modelInput" accept=".gltf,.glb,.fbx">
 
-        <label for="animationSelect">Select Animation:</label>
-        <select id="animationSelect" disabled>
-            <option>Load a model first</option>
-        </select>
+        <div id="animation-controls" style="display: none;">
+            <h3>Animation</h3>
+            <label for="animationSelect">Select Animation:</label>
+            <select id="animationSelect" disabled>
+                <option>Load a model first</option>
+            </select>
+            <div id="animation-details" class="model-info-section">
+                <p>No animation selected.</p>
+            </div>
+        </div>
 
-        <!-- Area to display basic model info -->
-        <div id="model-info"></div> 
+        <div id="model-info" style="display: none;">
+            <h3>Model Information</h3>
+            <div id="skeleton-info" class="model-info-section">
+                 <h4>Skeleton / Armature</h4>
+                 <p>No skeleton data found or model not loaded.</p>
+            </div>
+             <div id="skinning-info" class="model-info-section">
+                 <h4>Skinned Meshes</h4>
+                 <p>No skinned meshes found or model not loaded.</p>
+             </div>
+        </div>
     </div>
 
     <!-- Error Message Area -->

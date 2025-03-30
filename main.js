@@ -2,17 +2,21 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
-import { FBXLoader } from 'three/addons/loaders/FBXLoader.js'; 
-import config from './config.js'; 
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import config from './config.js';
 
 let scene, camera, renderer, clock, mixer, currentModel, currentAction;
-let controls; 
+let controls;
 let currentAnimations = [];
 const modelInput = document.getElementById('modelInput');
 const animationSelect = document.getElementById('animationSelect');
 const errorMessageDiv = document.getElementById('error-message');
 const loadingIndicator = document.getElementById('loading-indicator');
+const animationControlsDiv = document.getElementById('animation-controls');
+const animationDetailsDiv = document.getElementById('animation-details');
 const modelInfoDiv = document.getElementById('model-info');
+const skeletonInfoDiv = document.getElementById('skeleton-info');
+const skinningInfoDiv = document.getElementById('skinning-info');
 
 // --- Initialization ---
 
@@ -71,6 +75,7 @@ function init() {
     modelInput.addEventListener('change', handleFileSelect);
     animationSelect.addEventListener('change', playSelectedAnimation);
 
+    clearModelInfoUI(); // Initialize UI state
     animate();
 }
 
@@ -120,31 +125,38 @@ function loadModel(data, fileName) {
 
         scene.add(currentModel);
 
+        const skinnedMeshes = [];
+        let bones = [];
+
         currentModel.traverse((child) => {
             if (child.isMesh) {
                 child.castShadow = true;
                 child.receiveShadow = true;
-                if (child.isSkinnedMesh && (fileName.endsWith('.fbx') || animations.length > 0)) { 
-                    logModelDetails(child, animations);
+            }
+            if (child.isSkinnedMesh) {
+                skinnedMeshes.push(child);
+                // Assuming the first skinned mesh's skeleton is representative for basic display
+                // A more robust solution might aggregate bones from all skeletons if there are multiple
+                if (bones.length === 0 && child.skeleton) {
+                     bones = child.skeleton.bones;
                 }
             }
         });
 
-        if (fileName.endsWith('.fbx') && !scene.getObjectByProperty('isSkinnedMesh', true)) {
-            logModelDetails(model, animations); 
-        }
+        // Update Model Info UI
+        displaySkeletonInfo(bones);
+        displaySkinningInfo(skinnedMeshes);
+        modelInfoDiv.style.display = 'block'; // Show the info section
 
         if (currentAnimations && currentAnimations.length > 0) {
-            const objectToAnimate = currentModel.getObjectByProperty('isSkinnedMesh', true) || currentModel;
-            mixer = new THREE.AnimationMixer(objectToAnimate);
+            mixer = new THREE.AnimationMixer(currentModel);
             populateAnimationSelect();
-            playAnimation(currentAnimations[0]);
+            playAnimation(currentAnimations[0]); // Autoplay first animation
+            animationControlsDiv.style.display = 'block'; // Show animation controls
         } else {
             console.log("No animations found in the model.");
-            animationSelect.innerHTML = '<option>No animations found</option>';
-            animationSelect.disabled = true;
-            mixer = null;
-            updateModelInfo("No animations found."); 
+            clearAnimationUI();
+             mixer = null; 
         }
 
         centerAndFocusCamera();
@@ -163,10 +175,9 @@ function loadModel(data, fileName) {
         showError(errorMsg + ' Check console for details.');
         hideLoading();
         modelInput.value = '';
-        updateModelInfo(''); 
     };
 
-    clearModelInfo(); 
+    clearScene(); // Clear previous model *before* starting load
 
     if (fileName.endsWith('.gltf') || fileName.endsWith('.glb')) {
         loader = new GLTFLoader();
@@ -186,7 +197,10 @@ function loadModel(data, fileName) {
         loader = new FBXLoader();
         try {
             const fbxModel = loader.parse(data, ''); 
-            setupModel(fbxModel, fbxModel.animations); 
+            // FBXLoader might return a Group containing the mesh and potentially other helpers
+            // Ensure we're adding the primary visual object to the scene
+            const modelToAdd = fbxModel.isGroup ? fbxModel : new THREE.Group().add(fbxModel);
+            setupModel(modelToAdd, fbxModel.animations); 
         } catch(error) {
              handleLoadError(error);
         }
@@ -240,21 +254,23 @@ function populateAnimationSelect() {
             animationSelect.appendChild(option);
         });
         animationSelect.selectedIndex = 0; 
+        displayAnimationDetails(currentAnimations[0]); // Show details for the initially selected one
     } else {
-        const option = document.createElement('option');
-        option.textContent = 'No animations found';
-        animationSelect.appendChild(option);
+        clearAnimationUI();
     }
 }
 
 function playSelectedAnimation() {
-    if (!mixer) return; 
+    if (!mixer) return;
 
     const selectedIndex = parseInt(animationSelect.value, 10);
     if (!isNaN(selectedIndex) && selectedIndex >= 0 && selectedIndex < currentAnimations.length) {
-        playAnimation(currentAnimations[selectedIndex]);
+        const clip = currentAnimations[selectedIndex];
+        playAnimation(clip);
+        displayAnimationDetails(clip); // Update details display
     } else if (currentAnimations.length > 0) {
         console.warn("Invalid animation selection index:", animationSelect.value);
+        clearAnimationUI(true); // Keep dropdown but clear details
     }
 }
 
@@ -279,98 +295,90 @@ function playAnimation(clip) {
     currentAction = newAction;
 }
 
-// --- Model Details Logging ---
-
-function logModelDetails(modelObject, animations) {
-    console.log("--- Model Details ---");
-    let infoText = "";
-
-    let skinnedMesh = null;
-    if (modelObject.isSkinnedMesh) {
-        skinnedMesh = modelObject;
-    } else {
-         modelObject.traverse(child => {
-             if (child.isSkinnedMesh && !skinnedMesh) {
-                 skinnedMesh = child;
-             }
-         });
+function displayAnimationDetails(clip) {
+    if (!clip) {
+         animationDetailsDiv.innerHTML = '<p>No animation selected or details available.</p>';
+         return;
     }
-
-    if (skinnedMesh && skinnedMesh.skeleton) {
-        const skeleton = skinnedMesh.skeleton;
-        console.log("Skeleton Found:");
-        console.log(`  - Bones: ${skeleton.bones.length}`);
-        infoText += `Bones: ${skeleton.bones.length}<br>`;
-        const rootBones = skeleton.bones.filter(bone => !bone.parent || !(bone.parent.isBone)); 
-        console.log(`  - Root Bones (${rootBones.length}):`, rootBones.map(b => b.name));
-        console.log("  - Bone Hierarchy (Root Level):");
-        rootBones.forEach(bone => logBoneHierarchy(bone, '    '));
-
-        if (skinnedMesh.geometry && skinnedMesh.geometry.attributes.skinIndex && skinnedMesh.geometry.attributes.skinWeight) {
-            console.log("Skinning Info Found:");
-            console.log(`  - skinIndex attribute exists (Vertices influenced: ${skinnedMesh.geometry.attributes.skinIndex.count})`);
-            console.log(`  - skinWeight attribute exists (Weights per vertex: ${skinnedMesh.geometry.attributes.skinWeight.itemSize})`);
-            infoText += `Skinning: Yes<br>`;
-        } else {
-            console.log("Skinning Info: Not found on this mesh.");
-            infoText += `Skinning: No<br>`;
-        }
-    } else {
-        console.log("Skeleton / Skinned Mesh: Not found or no skeleton property.");
-        infoText += `Skinned Mesh: No<br>`;
-    }
-
-    if (animations && animations.length > 0) {
-        console.log(`Animation Clips Found: ${animations.length}`);
-        infoText += `Animations: ${animations.length}<br>`;
-        animations.forEach((clip, index) => {
-            console.log(`  - Clip ${index}: "${clip.name || 'Unnamed'}"`);
-            console.log(`    Duration: ${clip.duration.toFixed(2)}s`);
-            console.log(`    Tracks: ${clip.tracks.length}`);
-        });
-    } else {
-        console.log("Animation Clips: None found.");
-        if (!infoText.includes("No animations found")) { 
-            infoText += "Animations: 0<br>";
-        }
-    }
-
-    console.log("---------------------");
-    updateModelInfo(infoText); 
+    const duration = clip.duration.toFixed(2);
+    const tracks = clip.tracks.length;
+    animationDetailsDiv.innerHTML = `
+        <ul>
+            <li><strong>Name:</strong> ${clip.name || 'N/A'}</li>
+            <li><strong>Duration:</strong> ${duration} seconds</li>
+            <li><strong>Tracks:</strong> ${tracks}</li>
+        </ul>
+    `;
 }
 
-function logBoneHierarchy(bone, indent = '') {
-    console.log(`${indent}- ${bone.name} (${bone.constructor.name})`);
-    bone.children.forEach(child => {
-        if (child.isBone) { 
-            logBoneHierarchy(child, indent + '  ');
-        }
+// --- UI Display for Model Info ---
+
+function displaySkeletonInfo(bones) {
+    skeletonInfoDiv.innerHTML = '<h4>Skeleton / Armature</h4>'; // Clear previous
+    if (!bones || bones.length === 0) {
+        skeletonInfoDiv.innerHTML += '<p>No skeleton data found in model.</p>';
+        return;
+    }
+
+    const list = document.createElement('ul');
+    bones.forEach(bone => {
+        const listItem = document.createElement('li');
+        listItem.textContent = `${bone.name} (ID: ${bone.id})`;
+        // Could potentially add parent/child info here later for a tree view
+        list.appendChild(listItem);
     });
+    skeletonInfoDiv.appendChild(list);
+     skeletonInfoDiv.innerHTML += `<p>Total Bones: ${bones.length}</p>`;
 }
 
-// --- UI Update for Model Info ---
+function displaySkinningInfo(skinnedMeshes) {
+    skinningInfoDiv.innerHTML = '<h4>Skinned Meshes</h4>'; // Clear previous
+    if (!skinnedMeshes || skinnedMeshes.length === 0) {
+        skinningInfoDiv.innerHTML += '<p>No skinned meshes found in model.</p>';
+        return;
+    }
 
-function updateModelInfo(htmlContent) {
-     if (modelInfoDiv) {
-         modelInfoDiv.innerHTML = htmlContent;
-         modelInfoDiv.style.display = htmlContent ? 'block' : 'none';
+    const list = document.createElement('ul');
+    skinnedMeshes.forEach(mesh => {
+        const listItem = document.createElement('li');
+        const boneCount = mesh.skeleton ? mesh.skeleton.bones.length : 'N/A';
+        listItem.textContent = `${mesh.name || 'Unnamed Mesh'} (Bones: ${boneCount})`;
+        list.appendChild(listItem);
+    });
+     skinningInfoDiv.appendChild(list);
+}
+
+function clearModelInfoUI() {
+    modelInfoDiv.style.display = 'none'; // Hide the whole section
+    skeletonInfoDiv.innerHTML = '<h4>Skeleton / Armature</h4><p>Load a model to see skeleton data.</p>';
+    skinningInfoDiv.innerHTML = '<h4>Skinned Meshes</h4><p>Load a model to see skinning data.</p>';
+}
+
+function clearAnimationUI(keepSelect = false) {
+     if (!keepSelect) {
+         animationControlsDiv.style.display = 'none'; // Hide section
+         animationSelect.innerHTML = '<option>Load a model first</option>';
+         animationSelect.disabled = true;
      }
-}
-
-function clearModelInfo() {
-    updateModelInfo(''); 
+     animationDetailsDiv.innerHTML = '<p>No animations found or model not loaded.</p>';
 }
 
 // --- Scene Management & Cleanup ---
 
 function clearScene() {
     if (currentAction) {
-        currentAction.stop(); 
+        currentAction.stop();
         currentAction = null;
     }
     if (mixer) {
-         const animatedObject = currentModel.getObjectByProperty('isSkinnedMesh', true) || currentModel;
-         if (animatedObject) mixer.uncacheRoot(animatedObject); 
+         mixer.stopAllAction();
+         // Uncaching might need careful handling depending on the loader/model structure
+         // Let's be cautious and potentially skip uncacheRoot if it causes issues.
+         try {
+             if (currentModel) mixer.uncacheRoot(currentModel);
+         } catch (e) {
+            console.warn("Error during mixer uncache:", e);
+         }
          mixer = null;
      }
 
@@ -383,18 +391,25 @@ function clearScene() {
                     child.geometry.dispose();
                 }
                 if (child.material) {
-                    cleanMaterial(child.material);
+                    // Materials can be arrays
+                    if (Array.isArray(child.material)) {
+                        child.material.forEach(cleanMaterial);
+                    } else {
+                         cleanMaterial(child.material);
+                    }
                 }
             }
+            // Dispose other potential resources like textures not directly on materials
+            // if (child.isTexture) { child.dispose(); } // Less common at this level
         });
         console.log("Previous model resources disposed.");
         currentModel = null;
     }
 
-    currentAnimations = []; 
-    animationSelect.innerHTML = '<option>Load a model first</option>';
-    animationSelect.disabled = true;
-    clearModelInfo(); 
+    currentAnimations = [];
+    clearAnimationUI(); // Reset animation UI elements
+    clearModelInfoUI(); // Reset model info UI elements
+
 
     console.log("Scene cleared. Renderer info:", renderer.info.memory);
 }
